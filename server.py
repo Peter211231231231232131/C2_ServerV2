@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-ENHANCED SAFE MANAGEMENT SERVER
+ENHANCED SAFE MANAGEMENT SERVER - SIMPLIFIED
 Educational purpose only - Now with more features!
 """
 
-from flask import Flask, request, jsonify, render_template_string, send_file
+from flask import Flask, request, jsonify, render_template_string
 import hashlib
 import hmac
 import json
@@ -17,9 +17,6 @@ from typing import Dict, List, Optional, Tuple
 import secrets
 import uuid
 from collections import defaultdict
-import qrcode
-import io
-import base64
 
 # ============================================
 # ENHANCED CONFIGURATION
@@ -122,7 +119,7 @@ class EnhancedManagementServer:
         print(f"🌐 URL: https://c2-serverv2.onrender.com")
         print(f"📊 Dashboard: Real-time monitoring enabled")
         print(f"🔐 Auth: DISABLED (for testing)")
-        print(f"📈 Features: Analytics, QR Codes, Logging")
+        print(f"📈 Features: Analytics, Logging, Broadcast")
         print(f"{'='*60}")
         print("⚠️  EDUCATIONAL PURPOSES ONLY - SAFE COMMANDS")
         print(f"{'='*60}\n")
@@ -299,26 +296,6 @@ class EnhancedManagementServer:
         self.client_manager.conn.commit()
         self.server_stats['total_commands'] += 1
     
-    def generate_qr_code(self, data: str):
-        """Generate QR code for client connection"""
-        qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L,
-            box_size=10,
-            border=4,
-        )
-        qr.add_data(data)
-        qr.make(fit=True)
-        
-        img = qr.make_image(fill_color="black", back_color="white")
-        
-        # Convert to base64 for HTML embedding
-        buffered = io.BytesIO()
-        img.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        
-        return f"data:image/png;base64,{img_str}"
-    
     # ============================================
     # ENHANCED FLASK ROUTES
     # ============================================
@@ -366,9 +343,6 @@ class EnhancedManagementServer:
             ''')
             popular_commands = cursor.fetchall()
             
-            # Generate QR code for easy mobile access
-            qr_code = self.generate_qr_code(f"https://c2-serverv2.onrender.com")
-            
             html = """
             <!DOCTYPE html>
             <html>
@@ -382,6 +356,7 @@ class EnhancedManagementServer:
                         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                         color: #333;
                         line-height: 1.6;
+                        min-height: 100vh;
                     }
                     .container { 
                         max-width: 1400px; 
@@ -394,19 +369,26 @@ class EnhancedManagementServer:
                         border-radius: 15px;
                         margin-bottom: 30px;
                         box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
+                        text-align: center;
                     }
                     .header h1 { 
                         color: #2d3748;
                         font-size: 2.5rem;
+                        margin-bottom: 10px;
                     }
                     .header .subtitle {
                         color: #718096;
                         font-size: 1.1rem;
-                        margin-top: 5px;
                     }
+                    .server-url {
+                        background: #edf2f7;
+                        padding: 10px 20px;
+                        border-radius: 8px;
+                        margin-top: 15px;
+                        display: inline-block;
+                        font-family: monospace;
+                    }
+                    
                     .stats-grid {
                         display: grid;
                         grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -452,6 +434,14 @@ class EnhancedManagementServer:
                         margin-bottom: 20px;
                         padding-bottom: 10px;
                         border-bottom: 2px solid #e2e8f0;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+                    .section h2 .badge {
+                        font-size: 0.8rem;
+                        padding: 5px 10px;
+                        border-radius: 12px;
                     }
                     
                     table {
@@ -486,6 +476,7 @@ class EnhancedManagementServer:
                     .badge.warning { background: #feebc8; color: #744210; }
                     .badge.error { background: #fed7d7; color: #742a2a; }
                     .badge.info { background: #bee3f8; color: #2a4365; }
+                    .badge.primary { background: #ebf4ff; color: #2c5282; }
                     
                     .command-form {
                         background: #f7fafc;
@@ -524,20 +515,39 @@ class EnhancedManagementServer:
                         font-weight: 600;
                         cursor: pointer;
                         transition: transform 0.3s ease;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
                     }
                     button:hover {
                         transform: scale(1.05);
                     }
                     
-                    .qr-container {
-                        text-align: center;
-                        padding: 20px;
+                    .client-list {
+                        display: grid;
+                        gap: 15px;
                     }
-                    .qr-container img {
-                        max-width: 200px;
-                        border: 10px solid white;
+                    .client-card {
+                        background: white;
+                        padding: 20px;
                         border-radius: 10px;
-                        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+                        border: 1px solid #e2e8f0;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                    }
+                    .client-info {
+                        flex: 1;
+                    }
+                    .client-id {
+                        font-weight: bold;
+                        color: #2d3748;
+                        font-size: 1.1rem;
+                    }
+                    .client-details {
+                        color: #718096;
+                        font-size: 0.9rem;
+                        margin-top: 5px;
                     }
                     
                     .footer {
@@ -545,29 +555,36 @@ class EnhancedManagementServer:
                         padding: 20px;
                         color: white;
                         font-size: 0.9rem;
+                        margin-top: 30px;
                     }
                     .footer a {
                         color: white;
                         text-decoration: underline;
                     }
                     
+                    .action-buttons {
+                        display: flex;
+                        gap: 10px;
+                        flex-wrap: wrap;
+                    }
+                    
                     @media (max-width: 768px) {
-                        .header { flex-direction: column; text-align: center; }
                         .stats-grid { grid-template-columns: 1fr; }
                         table { display: block; overflow-x: auto; }
+                        .client-card { flex-direction: column; align-items: flex-start; }
+                        .action-buttons { margin-top: 15px; width: 100%; }
+                        .action-buttons button { width: 100%; }
                     }
                 </style>
             </head>
             <body>
                 <div class="container">
                     <div class="header">
-                        <div>
-                            <h1>🚀 Enhanced Management Server</h1>
-                            <div class="subtitle">Safe Command & Control for Educational Purposes</div>
-                        </div>
-                        <div class="qr-container">
-                            <div>Scan to access on mobile</div>
-                            <img src="QR_CODE_PLACEHOLDER" alt="QR Code">
+                        <h1>🚀 Enhanced Management Server</h1>
+                        <div class="subtitle">Safe Command & Control for Educational Purposes</div>
+                        <div class="server-url">https://c2-serverv2.onrender.com</div>
+                        <div style="margin-top: 15px; font-size: 0.9rem; color: #718096;">
+                            🔐 Authentication: Disabled | 📡 Real-time monitoring | 🎯 Safe commands only
                         </div>
                     </div>
                     
@@ -582,7 +599,7 @@ class EnhancedManagementServer:
                         </div>
                         <div class="stat-card purple">
                             <h3>Server Uptime</h3>
-                            <div class="value">{{ uptime }}</div>
+                            <div class="value">{{ uptime_display }}</div>
                         </div>
                         <div class="stat-card orange">
                             <h3>Popular Command</h3>
@@ -591,7 +608,10 @@ class EnhancedManagementServer:
                     </div>
                     
                     <div class="section">
-                        <h2>📱 Connected Clients</h2>
+                        <h2>
+                            📱 Connected Clients
+                            <span class="badge primary">{{ active_clients }} active</span>
+                        </h2>
                         {% if clients %}
                         <table>
                             <tr>
@@ -609,31 +629,83 @@ class EnhancedManagementServer:
                                 <td><strong>{{ client[0] }}</strong></td>
                                 <td>{{ client[1] }}</td>
                                 <td>{{ client[2] }}/{{ client[3] }}</td>
-                                <td>{{ client[4] }}</td>
-                                <td>{{ client[5][:19] }}</td>
-                                <td>{{ client[6][:19] }}</td>
+                                <td><code>{{ client[4] }}</code></td>
+                                <td>{{ client[5][:19] if client[5] else 'N/A' }}</td>
+                                <td>{{ client[6][:19] if client[6] else 'N/A' }}</td>
                                 <td>
                                     <span class="badge success">{{ client[7] }}</span>
                                 </td>
                                 <td>
-                                    <form class="command-form-inline" action="/command" method="POST" style="display: inline;">
-                                        <input type="hidden" name="client_id" value="{{ client[0] }}">
-                                        <select name="action" style="width: auto; margin-right: 5px;">
-                                            {% for cmd in safe_commands %}
-                                            <option value="{{ cmd }}">{{ cmd }}</option>
-                                            {% endfor %}
-                                        </select>
-                                        <button type="submit" style="padding: 8px 15px;">Send</button>
-                                    </form>
+                                    <div class="action-buttons">
+                                        <form action="/command" method="POST" style="display: inline;">
+                                            <input type="hidden" name="client_id" value="{{ client[0] }}">
+                                            <input type="hidden" name="action" value="echo">
+                                            <input type="hidden" name="params" value='{"message": "Hello {{ client[0] }}!"}'>
+                                            <button type="submit" style="padding: 8px 15px; font-size: 0.9rem;">👋 Echo</button>
+                                        </form>
+                                        <form action="/command" method="POST" style="display: inline;">
+                                            <input type="hidden" name="client_id" value="{{ client[0] }}">
+                                            <input type="hidden" name="action" value="get_system_info">
+                                            <button type="submit" style="padding: 8px 15px; font-size: 0.9rem;">💻 System</button>
+                                        </form>
+                                        <form action="/command" method="POST" style="display: inline;">
+                                            <input type="hidden" name="client_id" value="{{ client[0] }}">
+                                            <input type="hidden" name="action" value="get_time">
+                                            <button type="submit" style="padding: 8px 15px; font-size: 0.9rem;">⏰ Time</button>
+                                        </form>
+                                    </div>
                                 </td>
                             </tr>
                             {% endfor %}
                         </table>
                         {% else %}
-                        <p style="text-align: center; padding: 40px; color: #718096;">
-                            No clients connected yet. Start your Go client to see it here!
-                        </p>
+                        <div style="text-align: center; padding: 40px; color: #718096; background: #f7fafc; border-radius: 10px;">
+                            <div style="font-size: 3rem; margin-bottom: 20px;">📡</div>
+                            <h3 style="color: #4a5568; margin-bottom: 10px;">No clients connected yet</h3>
+                            <p>Start your Go client to see it appear here!</p>
+                            <p style="margin-top: 20px; font-size: 0.9rem;">
+                                Run: <code>go run EnhancedClient.go</code> on your machine
+                            </p>
+                        </div>
                         {% endif %}
+                    </div>
+                    
+                    <div class="section">
+                        <h2>🎯 Send Command</h2>
+                        <div class="command-form">
+                            <form action="/command" method="POST">
+                                <div class="form-group">
+                                    <label for="client_id">Client ID</label>
+                                    <input type="text" id="client_id" name="client_id" 
+                                           placeholder="Enter client ID or 'broadcast' for all clients" 
+                                           list="client-list" required>
+                                    <datalist id="client-list">
+                                        {% for client in clients %}
+                                        <option value="{{ client[0] }}">
+                                        {% endfor %}
+                                    </datalist>
+                                </div>
+                                <div class="form-group">
+                                    <label for="action">Command</label>
+                                    <select id="action" name="action" required>
+                                        {% for cmd in safe_commands %}
+                                        <option value="{{ cmd }}">{{ cmd }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="params">Parameters (JSON)</label>
+                                    <textarea id="params" name="params" rows="3" 
+                                              placeholder='{"message": "Hello from the server!"}'></textarea>
+                                    <div style="font-size: 0.8rem; color: #718096; margin-top: 5px;">
+                                        Leave empty for default parameters
+                                    </div>
+                                </div>
+                                <button type="submit">
+                                    <span>🚀 Send Command</span>
+                                </button>
+                            </form>
+                        </div>
                     </div>
                     
                     <div class="section">
@@ -649,9 +721,9 @@ class EnhancedManagementServer:
                             </tr>
                             {% for record in history %}
                             <tr>
-                                <td>{{ record[3][:19] }}</td>
-                                <td>{{ record[0] }}</td>
-                                <td>{{ record[1] }}</td>
+                                <td>{{ record[3][:19] if record[3] else 'N/A' }}</td>
+                                <td><code>{{ record[0] }}</code></td>
+                                <td><strong>{{ record[1] }}</strong></td>
                                 <td>
                                     {% if record[2] == 'success' %}
                                     <span class="badge success">{{ record[2] }}</span>
@@ -661,51 +733,29 @@ class EnhancedManagementServer:
                                     <span class="badge info">{{ record[2] }}</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ record[4]|round(3) }}s</td>
+                                <td>{{ "%.3f"|format(record[4]) if record[4] else "0.000" }}s</td>
                             </tr>
                             {% endfor %}
                         </table>
                         {% else %}
-                        <p style="text-align: center; padding: 40px; color: #718096;">
-                            No commands executed yet.
-                        </p>
+                        <div style="text-align: center; padding: 30px; color: #718096;">
+                            No commands executed yet. Send your first command above!
+                        </div>
                         {% endif %}
                     </div>
                     
                     <div class="section">
-                        <h2>🎯 Send Command</h2>
-                        <div class="command-form">
-                            <form action="/command" method="POST">
-                                <div class="form-group">
-                                    <label for="client_id">Client ID</label>
-                                    <input type="text" id="client_id" name="client_id" 
-                                           placeholder="Enter client ID or 'broadcast' for all" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="action">Command</label>
-                                    <select id="action" name="action" required>
-                                        {% for cmd in safe_commands %}
-                                        <option value="{{ cmd }}">{{ cmd }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="params">Parameters (JSON)</label>
-                                    <textarea id="params" name="params" rows="3" 
-                                              placeholder='{"message": "Hello!"}'></textarea>
-                                </div>
-                                <button type="submit">🚀 Send Command</button>
-                            </form>
-                        </div>
-                    </div>
-                    
-                    <div class="section">
                         <h2>📋 Available Commands</h2>
-                        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px;">
                             {% for cmd in safe_commands %}
-                            <div style="background: #edf2f7; padding: 15px; border-radius: 8px; flex: 1; min-width: 200px;">
-                                <strong>{{ cmd }}</strong>
-                                <div style="color: #718096; font-size: 0.9rem; margin-top: 5px;">
+                            <div style="background: #edf2f7; padding: 20px; border-radius: 10px; border-left: 4px solid #4299e1;">
+                                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                                    <div style="background: #4299e1; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+                                        {{ loop.index }}
+                                    </div>
+                                    <strong style="color: #2d3748;">{{ cmd }}</strong>
+                                </div>
+                                <div style="color: #718096; font-size: 0.9rem;">
                                     {{ command_descriptions[cmd] }}
                                 </div>
                             </div>
@@ -716,7 +766,10 @@ class EnhancedManagementServer:
                 
                 <div class="footer">
                     <p>⚠️ Educational Purposes Only | Safe Command Whitelist | No Malicious Actions</p>
-                    <p>Server: https://c2-serverv2.onrender.com | Clients connected: {{ active_clients }}</p>
+                    <p>Server: https://c2-serverv2.onrender.com | Active Clients: {{ active_clients }} | Commands Executed: {{ total_commands }}</p>
+                    <p style="margin-top: 10px; font-size: 0.8rem; opacity: 0.8;">
+                        🔄 Auto-refreshes every 30 seconds | Last updated: {{ current_time }}
+                    </p>
                 </div>
                 
                 <script>
@@ -730,19 +783,29 @@ class EnhancedManagementServer:
                         form.addEventListener('submit', function(e) {
                             const button = this.querySelector('button[type="submit"]');
                             if (button) {
-                                button.innerHTML = '⏳ Sending...';
+                                const originalText = button.innerHTML;
+                                button.innerHTML = '<span>⏳ Sending...</span>';
                                 button.disabled = true;
+                                
+                                // Re-enable after 3 seconds in case of error
+                                setTimeout(() => {
+                                    button.innerHTML = originalText;
+                                    button.disabled = false;
+                                }, 3000);
                             }
                         });
                     });
                     
-                    // Time formatting
+                    // Format timestamps
                     document.querySelectorAll('td').forEach(td => {
                         if (td.textContent.includes('T') && td.textContent.includes(':')) {
                             const date = new Date(td.textContent);
                             td.textContent = date.toLocaleString();
                         }
                     });
+                    
+                    // Auto-focus on client ID field
+                    document.getElementById('client_id')?.focus();
                 </script>
             </body>
             </html>
@@ -750,28 +813,35 @@ class EnhancedManagementServer:
             
             # Command descriptions
             command_descriptions = {
-                "get_system_info": "Get basic system information",
-                "get_disk_usage": "Check disk space usage",
-                "list_processes_safe": "List running processes (limited)",
-                "echo": "Echo back a message",
-                "get_network_info": "Get network configuration",
-                "get_time": "Get current server time",
-                "get_status": "Check client status",
-                "ping": "Simple ping response",
-                "get_geo_info": "Get simulated geolocation info"
+                "get_system_info": "Get basic system information (OS, hostname, etc.)",
+                "get_disk_usage": "Check disk space usage on client",
+                "list_processes_safe": "List running processes (limited to 10)",
+                "echo": "Echo back a message to test communication",
+                "get_network_info": "Get network configuration and IP info",
+                "get_time": "Get current time from client",
+                "get_status": "Check client status and version",
+                "ping": "Simple ping response for latency testing",
+                "get_geo_info": "Get simulated geolocation information"
             }
             
             popular_command = popular_commands[0][0] if popular_commands else "echo"
             
-            return render_template_string(html.replace("QR_CODE_PLACEHOLDER", qr_code),
+            # Format uptime nicely
+            uptime = datetime.now() - self.server_stats['start_time']
+            hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            uptime_display = f"{hours}h {minutes}m {seconds}s"
+            
+            return render_template_string(html,
                 clients=clients,
                 history=history,
                 active_clients=active_clients,
                 total_commands=total_commands,
                 popular_command=popular_command,
-                uptime=self.server_stats['uptime'],
+                uptime_display=uptime_display,
                 safe_commands=SAFE_COMMANDS,
-                command_descriptions=command_descriptions
+                command_descriptions=command_descriptions,
+                current_time=datetime.now().strftime("%H:%M:%S")
             )
         
         @self.app.route('/heartbeat', methods=['POST'])
@@ -790,7 +860,8 @@ class EnhancedManagementServer:
                 client_id = data.get('client_id', 'unknown')
                 print(f"\n💓 Heartbeat from: {client_id}")
                 print(f"   IP: {request.remote_addr}")
-                print(f"   Data: {data}")
+                print(f"   OS: {data.get('os', 'unknown')}")
+                print(f"   Arch: {data.get('arch', 'unknown')}")
                 
                 # Register/update client (NO AUTH CHECK)
                 success, message = self.register_client(data)
@@ -801,11 +872,11 @@ class EnhancedManagementServer:
                 commands = self.get_pending_commands(client_id)
                 
                 # If no commands, send a welcome command for new clients
-                if not commands and "new_client" in data.get('tags', []):
+                if not commands and data.get('version') == '2.0':
                     welcome_cmd = {
                         'command_id': f"welcome-{int(time.time())}",
                         'action': 'echo',
-                        'params': {'message': 'Welcome to the enhanced server!'},
+                        'params': {'message': 'Welcome to the enhanced server v2.0!'},
                         'timestamp': int(time.time())
                     }
                     commands = [welcome_cmd]
@@ -816,7 +887,8 @@ class EnhancedManagementServer:
                     'commands': commands,
                     'timestamp': int(time.time()),
                     'server_time': datetime.now().isoformat(),
-                    'server_version': '2.0-enhanced'
+                    'server_version': '2.0-enhanced',
+                    'client_count': self.server_stats['active_clients']
                 }
                 
                 return jsonify(response)
@@ -837,8 +909,11 @@ class EnhancedManagementServer:
                 client_id = data.get('client_id', 'unknown')
                 command_id = data.get('command_id', 'unknown')
                 status = data.get('status', 'unknown')
+                output = data.get('output', '')[:200]  # Limit for logging
                 
                 print(f"📤 Result from {client_id}: {command_id} - {status}")
+                if output:
+                    print(f"   Output preview: {output}")
                 
                 # Log the result
                 self.log_command_result(
@@ -881,14 +956,19 @@ class EnhancedManagementServer:
                 active_clients = [row[0] for row in cursor.fetchall()]
                 
                 sent_count = 0
+                command_ids = []
                 for cid in active_clients:
                     cmd_id = self.queue_command(cid, action, params)
                     if cmd_id and not cmd_id.startswith('Command'):
                         sent_count += 1
+                        command_ids.append(cmd_id)
+                
+                self.client_manager.log_message("INFO", 
+                    f"Broadcast command '{action}' to {sent_count} clients")
                 
                 return f"""
                 <script>
-                    alert('Command broadcast to {sent_count} clients!');
+                    alert('✅ Command broadcast to {sent_count} clients!\\nCommand IDs: {", ".join(command_ids[:5])}{"..." if len(command_ids) > 5 else ""}');
                     window.location.href = '/';
                 </script>
                 """
@@ -897,16 +977,19 @@ class EnhancedManagementServer:
                 command_id = self.queue_command(client_id, action, params)
                 
                 if command_id and not command_id.startswith('Command'):
+                    self.client_manager.log_message("INFO", 
+                        f"Command '{action}' sent to {client_id} (ID: {command_id})")
+                    
                     return f"""
                     <script>
-                        alert('Command queued successfully! ID: {command_id}');
+                        alert('✅ Command queued successfully!\\nClient: {client_id}\\nCommand: {action}\\nID: {command_id}');
                         window.location.href = '/';
                     </script>
                     """
                 else:
                     return f"""
                     <script>
-                        alert('Error: {command_id}');
+                        alert('❌ Error: {command_id}');
                         window.location.href = '/';
                     </script>
                     """
