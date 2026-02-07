@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import time
+import os
 import threading
 import sqlite3
 from datetime import datetime, timedelta
@@ -470,23 +471,16 @@ class SafeManagementServer:
 # ============================================
 # START THE SERVER
 # ============================================
+server = SafeManagementServer(
+    host="0.0.0.0",
+    port=int(os.environ.get("PORT", 8080)),
+    secret_key="educational-demo-key-change-in-production"
+)
+
+app = server.app  # Gunicorn looks for this
+
 
 if __name__ == "__main__":
-    # WARNING DISCLAIMER
-    print("🚨 IMPORTANT LEGAL NOTICE:")
-    print("This software is for EDUCATIONAL PURPOSES ONLY.")
-    print("It demonstrates secure client-server communication.")
-    print("DO NOT use this for unauthorized access or control of systems.")
-    print("You are responsible for complying with all applicable laws.")
-    print("-" * 50)
-    
-    # Create and run server
-    server = SafeManagementServer(
-        host='127.0.0.1',  # Only listen on localhost for safety
-        port=8080,
-        secret_key='educational-demo-key-change-in-production'  # Change this!
-    )
-    
     try:
         server.run(debug=True)
     except KeyboardInterrupt:
