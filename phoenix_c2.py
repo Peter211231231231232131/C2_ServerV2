@@ -52,7 +52,7 @@ def setup_logger():
         ]
     )
     LOGGER = logging.getLogger('PhoenixC2')
-
+    setup_logger()
 def init_database():
     """Initialize SQLite database"""
     conn = sqlite3.connect(DATABASE)
@@ -1393,7 +1393,6 @@ def main():
     args = parser.parse_args()
     
     # Setup
-    setup_logger()
     generate_key()
     init_database()
     
