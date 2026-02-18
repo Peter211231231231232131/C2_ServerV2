@@ -18,15 +18,15 @@ import threading
 import sqlite3
 import datetime
 import argparse
+import uuid
+import re
+import queue
 from flask import Flask, request, jsonify, render_template, send_file
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import queue
-import uuid
-import re
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # FIXED IMPORT
 
 app = Flask(__name__)
 CORS(app)
@@ -134,7 +134,12 @@ def generate_key():
     else:
         password = b"phoenix_c2_master_key_2026"
         salt = os.urandom(16)
-        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
+        kdf = PBKDF2HMAC(                          # FIXED CLASS NAME
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000
+        )
         ENCRYPTION_KEY = base64.urlsafe_b64encode(kdf.derive(password))
         
         with open(key_file, "wb") as f:
@@ -1375,6 +1380,9 @@ def create_web_interface():
     
     LOGGER.info("Web interface created")
 
+# Ensure template is created when module is imported (for Gunicorn)
+create_web_interface()
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description='PhoenixC2 Server')
@@ -1388,11 +1396,10 @@ def main():
     setup_logger()
     generate_key()
     init_database()
-    create_web_interface()
     
     global start_time
     start_time = time.time()
-    create_web_interface()
+    
     # Start server
     LOGGER.info(f"PhoenixC2 starting on {args.host}:{args.port}")
     socketio.run(app, host=args.host, port=args.port, debug=args.debug)
