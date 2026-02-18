@@ -23,7 +23,7 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import queue
 import uuid
 import re
@@ -134,7 +134,7 @@ def generate_key():
     else:
         password = b"phoenix_c2_master_key_2026"
         salt = os.urandom(16)
-        kdf = PBKDF2(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
+        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
         ENCRYPTION_KEY = base64.urlsafe_b64encode(kdf.derive(password))
         
         with open(key_file, "wb") as f:
