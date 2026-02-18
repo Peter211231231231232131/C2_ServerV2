@@ -1392,7 +1392,7 @@ def main():
     
     global start_time
     start_time = time.time()
-    
+    create_web_interface()
     # Start server
     LOGGER.info(f"PhoenixC2 starting on {args.host}:{args.port}")
     socketio.run(app, host=args.host, port=args.port, debug=args.debug)
