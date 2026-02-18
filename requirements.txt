@@ -1,15 +1,11 @@
 # PhoenixC2 Server Requirements
-# Production Grade Command & Control Server Dependencies
-# Python 3.8+ Recommended
+# Removed gevent and eventlet to avoid compilation issues on Python 3.14
+# WebSocket will fall back to long-polling; use Python 3.11 for full async support
 
-# Core Framework
 Flask==2.3.3
 Flask-SocketIO==5.3.4
 Flask-CORS==4.0.0
 python-socketio==5.9.0
-eventlet==0.33.3  # For production WebSocket support
-gevent==23.9.1    # Async worker support
-gevent-websocket==0.10.1
 
 # Encryption & Security
 cryptography==41.0.7
@@ -18,60 +14,55 @@ bcrypt==4.0.1
 passlib==1.7.4
 
 # Database
-sqlite3  # Built-in, no installation needed
-SQLAlchemy==2.0.23  # Optional ORM for scaling
+SQLAlchemy==2.0.23
 
-# Web Interface Enhancements
+# Web Framework
 jinja2==3.1.2
 markupsafe==2.1.3
 itsdangerous==2.1.2
 click==8.1.7
 werkzeug==3.0.1
 
-# Utility Libraries
+# Networking & HTTP
 requests==2.31.0
 urllib3==2.1.0
 certifi==2023.11.17
 idna==3.6
 chardet==5.2.0
 
-# Data Processing
+# Date/Time
 pytz==2023.3
 python-dateutil==2.8.2
 six==1.16.0
 
-# Monitoring & Logging
+# System & Monitoring
 psutil==5.9.6
 loguru==0.7.2
-colorama==0.4.6  # Windows colored output
-
-# Networking
+colorama==0.4.6
 netifaces==0.11.0
 dnspython==2.4.2
-
-# File Operations
 watchdog==3.0.0
 
-# API Documentation (Optional)
+# API & Serialization
 apispec==6.3.0
 marshmallow==3.20.1
 
-# Performance & Caching
-redis==5.0.1  # Optional for distributed C2
-hiredis==2.2.3  # Faster Redis parser
+# Caching & Performance
+redis==5.0.1
+hiredis==2.2.3
 
-# Load Balancing & Proxy Support
+# Configuration
 python-dotenv==1.0.0
 
 # Compression
-zstandard==0.22.0  # Better compression for exfil data
+zstandard==0.22.0
 
-# Async Support
+# Async (optional, used by some features)
 aiohttp==3.9.1
 aiofiles==23.2.1
 asyncio==3.4.3
 
-# Development Tools (Optional)
+# Development / Testing (optional)
 pytest==7.4.3
 pytest-cov==4.1.0
 black==23.12.1
@@ -79,115 +70,13 @@ flake8==6.1.0
 mypy==1.7.1
 isort==5.13.2
 
-# Production Server
-gunicorn==21.2.0  # For Linux/Unix
-waitress==2.1.2   # For Windows
+# Production Servers
+gunicorn==21.2.0
+waitress==2.1.2
 
 # Rate Limiting
 limits==3.9.0
 slowapi==0.1.9
 
-# JWT Authentication (if implementing multi-user)
+# Authentication
 PyJWT==2.8.0
-
-# Template Requirements for Web Interface
-# Bootstrap 5 and Font Awesome are loaded via CDN in HTML template
-# No local installation needed
-
-# Installation Instructions:
-# pip install -r requirements.txt
-# 
-# For production deployment:
-# pip install gunicorn eventlet gevent gevent-websocket
-#
-# For maximum performance on Linux:
-# pip install uvicorn[standard]  # ASGI alternative
-#
-# Database Setup:
-# SQLite is used by default - no additional setup required
-# For PostgreSQL: pip install psycopg2-binary
-# For MySQL: pip install pymysql
-#
-# To run the server:
-# python phoenix_c2.py --host 0.0.0.0 --port 5000
-#
-# For production with gunicorn:
-# gunicorn -k eventlet -w 1 --bind 0.0.0.0:5000 phoenix_c2:app
-#
-# With SSL/TLS:
-# gunicorn -k eventlet -w 1 --bind 0.0.0.0:443 --certfile cert.pem --keyfile key.pem phoenix_c2:app
-#
-# Security Notes:
-# - Change default encryption key in generate_key() function
-# - Implement proper authentication for production use
-# - Use HTTPS in production
-# - Consider implementing IP whitelisting
-# - Add rate limiting for beacon endpoints
-# - Regularly rotate encryption keys
-# - Monitor for suspicious activity
-# - Keep all dependencies updated
-# - Use environment variables for sensitive configuration
-#
-# Performance Tuning:
-# - Increase worker count based on CPU cores
-# - Use Redis for session storage in clustered deployments
-# - Enable compression for large data transfers
-# - Implement database connection pooling
-# - Use async database drivers for high concurrency
-#
-# For distributed C2 architecture:
-# pip install celery==5.3.4
-# pip redis celery[redis]
-#
-# For real-time analytics:
-# pip install pandas numpy matplotlib
-#
-# Minimum Requirements:
-# - Python 3.8 or higher
-# - 1GB RAM minimum (4GB recommended for production)
-# - 10GB storage for exfiltrated data
-# - Stable internet connection
-# - Open ports for C2 communication
-#
-# Compatibility Notes:
-# - Windows: Use waitress instead of gunicorn
-# - Linux: Gunicorn with eventlet workers recommended
-# - macOS: Development only, use Linux for production
-# - Docker: Use python:3.11-slim base image
-#
-# Docker Support:
-# FROM python:3.11-slim
-# WORKDIR /app
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-# COPY . .
-# EXPOSE 5000
-# CMD ["python", "phoenix_c2.py", "--host", "0.0.0.0", "--port", "5000"]
-#
-# Environment Variables (for .env file):
-# PHOENIX_C2_HOST=0.0.0.0
-# PHOENIX_C2_PORT=5000
-# PHOENIX_C2_DEBUG=false
-# PHOENIX_C2_SECRET_KEY=change_this_in_production
-# PHOENIX_C2_DATABASE=/path/to/phoenix_c2.db
-# PHOENIX_C2_REDIS_URL=redis://localhost:6379/0
-# PHOENIX_C2_ENCRYPTION_KEY=base64_encoded_key_32_bytes
-#
-# Monitoring Integration:
-# pip install prometheus_client  # Metrics export
-# pip install opentelemetry-api opentelemetry-sdk  # Tracing
-#
-# Backup and Recovery:
-# - Regular database backups recommended
-# - Encrypt stored exfiltrated data
-# - Implement log rotation
-# - Use RAID or distributed storage for critical data
-#
-# Legal Notice:
-# This software is for authorized security testing and educational purposes only.
-# Unauthorized use against systems you do not own or have explicit permission to test is illegal.
-# The author assumes no liability for misuse or damage caused by this software.
-# Always comply with all applicable laws and regulations.
-#
-# Version: 2.0.0
-# Last Updated: 2026-02-18
