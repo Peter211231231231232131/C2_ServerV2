@@ -1,15 +1,18 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import asyncio
-from aiohttp import web  # For the HTTP server
+from aiohttp import web
+from datetime import datetime, timezone, timedelta
+import re
 
 # Read configuration from environment variables
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", 0))
 CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
 AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
-PORT = int(os.getenv("PORT", 10000))  # Render sets this automatically
+STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))  # Auto-delete after this many minutes without heartbeat
+PORT = int(os.getenv("PORT", 10000))  # Render's port
 
 # Validate required variables
 if not BOT_TOKEN:
@@ -40,6 +43,49 @@ async def start_http_server():
     await site.start()
     print(f"HTTP health check server running on port {PORT}")
 
+# ---------- Background Task: Clean Stale Agents ----------
+@tasks.loop(minutes=1)
+async def clean_stale_agents():
+    """Delete agent channels that haven't reported a heartbeat within the threshold."""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+
+    agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
+    now = datetime.now(timezone.utc)
+
+    for channel in agent_channels:
+        if not channel.topic:
+            # No topic – probably dead; delete
+            print(f"Deleting {channel.name} (no topic)")
+            await channel.delete()
+            continue
+
+        # Try to extract the last seen timestamp from the topic
+        # Expected format: "Agent: ... | Last seen: 2026-02-19T12:34:56Z"
+        match = re.search(r"Last seen:\s*([^|\n]+)", channel.topic)
+        if not match:
+            # No timestamp – delete
+            print(f"Deleting {channel.name} (no timestamp in topic)")
+            await channel.delete()
+            continue
+
+        timestamp_str = match.group(1).strip()
+        try:
+            # Parse the timestamp (RFC3339 format)
+            last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
+                print(f"Deleting {channel.name} (last seen {last_seen})")
+                await channel.delete()
+        except Exception as e:
+            print(f"Error parsing timestamp for {channel.name}: {e}")
+            # If we can't parse, delete to be safe
+            await channel.delete()
+
+@clean_stale_agents.before_loop
+async def before_clean_stale_agents():
+    await bot.wait_until_ready()
+
 # ---------- Discord Bot Events ----------
 @bot.event
 async def on_ready():
@@ -51,6 +97,7 @@ async def on_ready():
             await guild.create_text_channel(CONTROL_CHANNEL_NAME)
             print(f"Created #{CONTROL_CHANNEL_NAME} channel")
     print("Bot is ready!")
+    clean_stale_agents.start()  # Start the background task
 
 @bot.event
 async def on_message(message):
