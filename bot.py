@@ -25,7 +25,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.messages = True
-intents.message_history = True  # Needed to read old messages
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
