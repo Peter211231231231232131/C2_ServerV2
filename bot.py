@@ -5,8 +5,8 @@ import datetime
 import re
 
 # Configuration - replace with your values
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-GUILD_ID = 123456789012345678  # Replace with your Discord server ID
+BOT_TOKEN = "MTQ3NDAxODgzMTIwMTczMDU2MA.GAPIi-.yxEafGgJ10G944ZoMO_m1M73VrLo_VuQgcknVI"
+GUILD_ID = 1474017883985285218  # Replace with your Discord server ID
 CONTROL_CHANNEL_NAME = "control"  # Channel where operator types !agents, etc.
 AGENT_CHANNEL_PREFIX = "agent-"   # All agent channels start with this
 
