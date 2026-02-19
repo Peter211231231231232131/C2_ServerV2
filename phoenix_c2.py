@@ -1422,16 +1422,16 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup (note: setup_logger already called at module level)
-    generate_key()
-    init_database()
-    
-    global start_time
-    start_time = time.time()
-    
-    # Start server
-    LOGGER.info(f"PhoenixC2 starting on {args.host}:{args.port}")
-    socketio.run(app, host=args.host, port=args.port, debug=args.debug)
+   # ==================== MODULE-LEVEL INITIALIZATION ====================
+# These run when Gunicorn imports the module
+setup_logger()          # must be first so LOGGER is available
+generate_key()          # loads or creates encryption key
+init_database()         # creates tables if they don't exist
+create_web_interface()  # writes index.html
 
+# Uptime tracking (used by /api/stats)
+start_time = time.time()
+
+# ==================== MAIN ENTRY POINT (for direct execution) ====================
 if __name__ == "__main__":
     main()
