@@ -1,14 +1,21 @@
 import discord
 from discord.ext import commands
+import os
 import asyncio
 import datetime
 import re
 
-# Configuration - replace with your values
-BOT_TOKEN = "MTQ3NDAxODgzMTIwMTczMDU2MA.GAPIi-.yxEafGgJ10G944ZoMO_m1M73VrLo_VuQgcknVI"
-GUILD_ID = 1474017883985285218  # Replace with your Discord server ID
-CONTROL_CHANNEL_NAME = "control"  # Channel where operator types !agents, etc.
-AGENT_CHANNEL_PREFIX = "agent-"   # All agent channels start with this
+# Load configuration from environment variables (set these on your system or in GitHub Secrets)
+BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "YOUR_FALLBACK_TOKEN_HERE")  # Set env var or replace fallback
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))  # Set env var or replace with your server ID
+CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")  # Optional override
+AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")  # Optional override
+
+# Validate required variables
+if not BOT_TOKEN or BOT_TOKEN == "YOUR_FALLBACK_TOKEN_HERE":
+    raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
+if not GUILD_ID:
+    raise ValueError("DISCORD_GUILD_ID environment variable not set")
 
 # Bot setup
 intents = discord.Intents.default()
@@ -103,10 +110,6 @@ async def kill_all(ctx):
     await ctx.send(f"Kill signal sent to {len(agent_channels)} agents.")
 
 # Commands inside agent channels
-@bot.event
-async def on_message(message):
-    await bot.process_commands(message)  # Allow prefix commands to work
-
 @bot.listen()
 async def on_message(message):
     # This handles commands typed directly in agent channels
