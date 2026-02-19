@@ -11,8 +11,8 @@ BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", 0))
 CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
 AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
-STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))  # Auto-delete after this many minutes without heartbeat
-PORT = int(os.getenv("PORT", 10000))  # Render's port
+STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
+PORT = int(os.getenv("PORT", 10000))
 
 # Validate required variables
 if not BOT_TOKEN:
@@ -25,6 +25,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 intents.messages = True
+intents.message_history = True  # Needed to read old messages
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -46,7 +47,7 @@ async def start_http_server():
 # ---------- Background Task: Clean Stale Agents ----------
 @tasks.loop(minutes=1)
 async def clean_stale_agents():
-    """Delete agent channels that haven't reported a heartbeat within the threshold."""
+    """Delete agent channels if the heartbeat message hasn't been updated recently."""
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return
@@ -55,32 +56,36 @@ async def clean_stale_agents():
     now = datetime.now(timezone.utc)
 
     for channel in agent_channels:
-        if not channel.topic:
-            # No topic – probably dead; delete
-            print(f"Deleting {channel.name} (no topic)")
-            await channel.delete()
-            continue
-
-        # Try to extract the last seen timestamp from the topic
-        # Expected format: "Agent: ... | Last seen: 2026-02-19T12:34:56Z"
-        match = re.search(r"Last seen:\s*([^|\n]+)", channel.topic)
-        if not match:
-            # No timestamp – delete
-            print(f"Deleting {channel.name} (no timestamp in topic)")
-            await channel.delete()
-            continue
-
-        timestamp_str = match.group(1).strip()
         try:
-            # Parse the timestamp (RFC3339 format)
-            last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-            if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
-                print(f"Deleting {channel.name} (last seen {last_seen})")
+            # Fetch the last few messages to find the heartbeat message
+            # The heartbeat message is the first one sent by the bot in that channel
+            async for msg in channel.history(limit=10, oldest_first=True):
+                if msg.author == bot.user and "**Last seen:**" in msg.content:
+                    # Found the heartbeat message
+                    match = re.search(r"\*\*Last seen:\*\*\s*([^\n]+)", msg.content)
+                    if not match:
+                        # No timestamp – delete
+                        print(f"Deleting {channel.name} (no timestamp in heartbeat)")
+                        await channel.delete()
+                        break
+                    timestamp_str = match.group(1).strip()
+                    try:
+                        last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
+                            print(f"Deleting {channel.name} (last seen {last_seen})")
+                            await channel.delete()
+                    except Exception as e:
+                        print(f"Error parsing timestamp for {channel.name}: {e}")
+                        await channel.delete()
+                    break
+            else:
+                # No heartbeat message found – delete
+                print(f"Deleting {channel.name} (no heartbeat message)")
                 await channel.delete()
+        except discord.Forbidden:
+            print(f"No permission to read history in {channel.name}")
         except Exception as e:
-            print(f"Error parsing timestamp for {channel.name}: {e}")
-            # If we can't parse, delete to be safe
-            await channel.delete()
+            print(f"Error processing {channel.name}: {e}")
 
 @clean_stale_agents.before_loop
 async def before_clean_stale_agents():
@@ -97,7 +102,7 @@ async def on_ready():
             await guild.create_text_channel(CONTROL_CHANNEL_NAME)
             print(f"Created #{CONTROL_CHANNEL_NAME} channel")
     print("Bot is ready!")
-    clean_stale_agents.start()  # Start the background task
+    clean_stale_agents.start()
 
 @bot.event
 async def on_message(message):
@@ -119,8 +124,13 @@ async def list_agents(ctx):
         return
     embed = discord.Embed(title="Active Agents", color=0x00ff00)
     for ch in agent_channels:
-        topic = ch.topic or "No info"
-        embed.add_field(name=f"#{ch.name}", value=topic, inline=False)
+        # Get the latest heartbeat message to display status
+        async for msg in ch.history(limit=10):
+            if msg.author == bot.user and "**Last seen:**" in msg.content:
+                embed.add_field(name=f"#{ch.name}", value=msg.content, inline=False)
+                break
+        else:
+            embed.add_field(name=f"#{ch.name}", value="No heartbeat message", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="broadcast", help="Send a command to all agents")
@@ -171,9 +181,7 @@ async def on_message(message):
 
 # ---------- Main Entry Point ----------
 async def main():
-    # Start HTTP server for Render health checks
     asyncio.create_task(start_http_server())
-    # Start Discord bot
     await bot.start(BOT_TOKEN)
 
 if __name__ == "__main__":
