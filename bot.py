@@ -180,6 +180,7 @@ async def kill_all(ctx):
 # ------------------- AGENT CHANNEL COMMAND LISTENER -------------------
 @bot.listen()
 async def on_message(message):
+    print(f"🔵 DEBUG: Message received in #{message.channel.name} from {message.author}: {message.content}")
     if message.author == bot.user:
         return
     if message.guild.id != GUILD_ID:
