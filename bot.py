@@ -39,7 +39,7 @@ intents.messages = True
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        self.tree = app_commands.CommandTree(self)
+        # self.tree is already created by the base class – do NOT reassign it
 
     async def setup_hook(self):
         # Sync commands to the specific guild (instant)
@@ -123,11 +123,17 @@ async def send_command_to_agent(interaction: discord.Interaction, command_text: 
     """Send a command message to the agent's channel."""
     channel = interaction.channel
     if not channel.name.startswith(AGENT_CHANNEL_PREFIX):
-        await interaction.response.send_message("This command can only be used in an agent channel.", ephemeral=True)
+        await interaction.response.send_message(
+            "This command can only be used in an agent channel.",
+            ephemeral=True
+        )
         return False
     # Send a message that the agent will recognize
     await channel.send(f"[CMD] {command_text}")
-    await interaction.response.send_message(f"✅ Command `{command_text}` sent to agent.", ephemeral=True)
+    await interaction.response.send_message(
+        f"✅ Command `{command_text}` sent to agent.",
+        ephemeral=True
+    )
     return True
 
 @bot.tree.command(name="run", description="Execute a shell command on the agent")
