@@ -59,22 +59,10 @@ async def handle_agent_download(request):
         return web.Response(text="Agent binary not found", status=404)
     return web.FileResponse(file_path)
 
-async def handle_script_download(request):
-    """Serve Lua scripts from the scripts/ folder."""
-    script_name = request.match_info['name']
-    # Prevent path traversal
-    if '..' in script_name or script_name.startswith('/'):
-        return web.Response(text="Invalid script name", status=400)
-    file_path = os.path.join(os.path.dirname(__file__), "scripts", script_name)
-    if not os.path.exists(file_path):
-        return web.Response(text="Script not found", status=404)
-    return web.FileResponse(file_path)
-
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/agent.exe", handle_agent_download)
-app.router.add_get("/scripts/{name}", handle_script_download)
 
 async def start_http_server():
     runner = web.AppRunner(app)
@@ -257,15 +245,6 @@ async def lockdown_command(interaction: discord.Interaction):
 @bot.tree.command(name="enforce_dns", description="Flush DNS cache and disable DNS-over-HTTPS in browsers")
 async def enforce_dns_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "enforce_dns")
-
-# New script‑related commands
-@bot.tree.command(name="exec", description="Execute a Lua script from the server")
-async def exec_command(interaction: discord.Interaction, script_name: str):
-    await send_command_to_agent(interaction, f"exec {script_name}")
-
-@bot.tree.command(name="list_scripts", description="List available Lua scripts")
-async def list_scripts_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "list")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
