@@ -1,3 +1,0 @@
-screenshot
-keylog_start
-keylog_stop
