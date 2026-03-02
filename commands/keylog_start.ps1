@@ -97,12 +97,13 @@ while(`$true) {
 "@
 
 # Encode the script as a command to pass to new PowerShell process
-$encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptBlock))
+$bytes = [Text.Encoding]::Unicode.GetBytes($scriptBlock)
+$encodedCommand = [Convert]::ToBase64String($bytes)
 
 # Start hidden PowerShell process
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "powershell.exe"
-$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand -logFile `"$logFile`""
+$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
 $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)
