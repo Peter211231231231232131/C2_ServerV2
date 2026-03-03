@@ -3,11 +3,9 @@ param(
 )
 
 if (-not $Path) {
-    Write-Output "❌ No path received. Raw args: $args"
+    Write-Output "Usage: upload <filepath>"
     exit
 }
-
-Write-Output "📁 Path received: $Path"
 
 if (Test-Path $Path) {
     $bytes = [System.IO.File]::ReadAllBytes($Path)
@@ -16,5 +14,5 @@ if (Test-Path $Path) {
     Write-Output "FILE:$filename"
     Write-Output $base64
 } else {
-    Write-Output "❌ File not found: $Path"
+    Write-Output "File not found: $Path"
 }
