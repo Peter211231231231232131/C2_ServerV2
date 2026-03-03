@@ -9,4 +9,5 @@ $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 $base64 = [System.Convert]::ToBase64String($ms.ToArray())
 $graphics.Dispose()
 $bitmap.Dispose()
+Write-Output "FILE:screenshot.png"
 Write-Output $base64
