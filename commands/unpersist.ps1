@@ -1,11 +1,10 @@
 param($args)
 
-$regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$regName = "WindowsUpdater"
+$taskName = "WindowsUpdaterTask"
 
-if (Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue) {
-    Remove-ItemProperty -Path $regPath -Name $regName
-    Write-Output "✅ Persistence removed."
-} else {
-    Write-Output "ℹ️ No persistence key found."
+try {
+    schtasks /delete /tn $taskName /f | Out-Null
+    Write-Output "✅ Scheduled task '$taskName' deleted."
+} catch {
+    Write-Output "❌ Failed to delete task (maybe it doesn't exist?)."
 }

