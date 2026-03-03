@@ -7,12 +7,10 @@ if (-not $agentPath) {
 }
 
 $taskName = "WindowsUpdaterTask"
-$taskCommand = "cmd.exe"
-$taskArguments = "/c start /b `"`" `"$agentPath`""
 
-# Create scheduled task that runs at user logon
+# Create scheduled task that runs the agent directly at user logon
 try {
-    schtasks /create /tn $taskName /tr "$taskCommand $taskArguments" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
+    schtasks /create /tn $taskName /tr "\"$agentPath\"" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
     Write-Output "✅ Scheduled task '$taskName' created. Agent will run at next logon."
 } catch {
     Write-Output "❌ Failed to create task: $_"
