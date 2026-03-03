@@ -11,7 +11,8 @@ function Get-SysInfo {
     $info['Windows Version'] = $computerInfo.WindowsVersion
     $info['Build'] = $computerInfo.WindowsBuildLabEx
     $info['Time Zone'] = $computerInfo.TimeZone
-    $info['Total RAM (GB)'] = [math]::Round($computerInfo.TotalPhysicalMemory / 1GB, 2)
+    $ramBytes = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+    $info['Total RAM (GB)'] = [math]::Round($ramBytes / 1GB, 2)
 
     # CPU info
     $cpu = Get-CimInstance Win32_Processor
