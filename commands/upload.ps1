@@ -2,6 +2,9 @@ param(
     [string]$Path
 )
 
+# Remove surrounding double quotes if present
+$Path = $Path -replace '^"|"$', ''
+
 if (-not $Path) {
     Write-Output "Usage: upload <filepath>"
     exit
