@@ -1,66 +1,33 @@
 param($args)
 
-$carrierFile = "C:\Windows\Temp\~DF539A.tmp"
-$streamName = "thumbs.db"
-$scriptPath = "C:\Windows\Temp\run.ps1"
-$taskName = "WindowsUpdaterTask"
-$tempAgent = "$env:TEMP\agent.exe"
+$fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+$fontFile = "$fontDir\seguibl.ttf"
+$launcherPath = "$fontDir\run.ps1"
+$shortcutPath = "$([Environment]::GetFolderPath('Startup'))\WindowsUpdate.lnk"
 
 Write-Output "[+] Removing persistence..."
 
-# 1. Remove the hidden stream from the carrier file
-if (Test-Path $carrierFile) {
-    try {
-        Remove-Item -Path $carrierFile -Stream $streamName -Force -ErrorAction Stop
-        Write-Output "[+] Hidden stream '$streamName' removed from $carrierFile"
-    } catch {
-        Write-Output "[-] Failed to remove hidden stream (maybe it doesn't exist?)"
-    }
-} else {
-    Write-Output "[-] Carrier file not found."
+# Remove startup shortcut
+if (Test-Path $shortcutPath) {
+    Remove-Item $shortcutPath -Force
+    Write-Output "[+] Removed shortcut"
 }
 
-# 2. Delete the scheduled task using COM (no password prompt)
-try {
-    $taskService = New-Object -ComObject Schedule.Service
-    $taskService.Connect()
-    $rootFolder = $taskService.GetFolder("\")
-    $rootFolder.DeleteTask($taskName, 0)
-    Write-Output "[+] Scheduled task '$taskName' deleted."
-} catch {
-    Write-Output "[-] Failed to delete scheduled task (maybe it doesn't exist?)"
+# Remove hidden stream from font file
+if (Test-Path $fontFile) {
+    Remove-Item -Path $fontFile -Stream "Zone.Identifier" -Force -ErrorAction SilentlyContinue
+    Write-Output "[+] Removed hidden stream from font file"
+    
+    # Optional: delete the font file entirely
+    Remove-Item $fontFile -Force -ErrorAction SilentlyContinue
+    Write-Output "[+] Deleted font file"
 }
 
-# 3. Delete the extraction script
-if (Test-Path $scriptPath) {
-    try {
-        Remove-Item $scriptPath -Force -ErrorAction Stop
-        Write-Output "[+] Extraction script deleted: $scriptPath"
-    } catch {
-        Write-Output "[-] Could not delete extraction script."
-    }
-}
-
-# 4. Optionally delete the carrier file itself
-if (Test-Path $carrierFile) {
-    try {
-        Remove-Item $carrierFile -Force -ErrorAction Stop
-        Write-Output "[+] Carrier file deleted: $carrierFile"
-    } catch {
-        Write-Output "[-] Could not delete carrier file."
-    }
-}
-
-# 5. Remove any leftover temporary agent
-if (Test-Path $tempAgent) {
-    try {
-        Remove-Item $tempAgent -Force -ErrorAction Stop
-        Write-Output "[+] Removed temporary agent: $tempAgent"
-    } catch {
-        Write-Output "[-] Could not remove $tempAgent (may be in use)."
-    }
+# Remove launcher script
+if (Test-Path $launcherPath) {
+    Remove-Item $launcherPath -Force
+    Write-Output "[+] Removed launcher script"
 }
 
 Write-Output ""
 Write-Output "✅ UNPERSIST COMPLETE"
-Write-Output "Reboot to verify the agent no longer starts automatically."

