@@ -1,3 +1,4 @@
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds

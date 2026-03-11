@@ -1,3 +1,4 @@
+$ProgressPreference = 'SilentlyContinue'
 param($args)
 
 $fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"

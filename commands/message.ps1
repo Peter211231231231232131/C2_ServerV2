@@ -1,3 +1,4 @@
+$ProgressPreference = 'SilentlyContinue'
 param(
     [string]$Text
 )

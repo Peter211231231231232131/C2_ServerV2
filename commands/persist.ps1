@@ -1,3 +1,4 @@
+$ProgressPreference = 'SilentlyContinue'
 param($args)
 
 $agentPath = $env:AgentPath

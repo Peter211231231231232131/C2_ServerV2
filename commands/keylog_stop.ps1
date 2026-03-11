@@ -1,3 +1,4 @@
+$ProgressPreference = 'SilentlyContinue'
 param($args)
 
 $channelID = $env:ChannelID
