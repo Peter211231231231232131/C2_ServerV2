@@ -56,6 +56,7 @@ if (Test-Path $agentFile) { Remove-Item $agentFile -Force }
 Copy-Item -LiteralPath $sourcePath -Destination $agentFile -Force
 attrib +h $agentFile
 Write-Host "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
+Write-Host "[+] Agent source path: $sourcePath"
 
 # Create run.ps1 (launches agent.exe)
 $runPs1 = "$hideDir\run.ps1"
